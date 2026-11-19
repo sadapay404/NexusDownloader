@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   windows-x64:
-    if: ${{ false }} # One-off artifact retrieval, not a new build.
     runs-on: windows-2025
     timeout-minutes: 50
     defaults:
@@ -93,72 +92,3 @@ jobs:
           path: ${{ runner.temp }}/NexusDownloader-Windows-x64/*
           if-no-files-found: error
           retention-days: 14
-  encrypted-setup-handoff:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 6
-    permissions:
-      actions: read
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      VERIFIED_RUN: '44573239540'
-      VERIFIED_SHA: 'e61d67e509ec55157474b74dfcdfc0d2620feef9'
-      VERIFIED_ARTIFACT: '14556056476'
-      VERIFIED_ZIP_SHA: '726e4cb46dcbe721e7729691b1eb26ea697ef1c290d9730f248fce6efb4689f3'
-    steps:
-      - name: Retrieve the verified Setup without committing any binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          ulimit -c 0
-          run=$(gh run view "$VERIFIED_RUN" -R "$GITHUB_REPOSITORY" --json conclusion,headSha,headBranch)
-          [[ "$(jq -r .conclusion <<<"$run")" == 'success' && "$(jq -r .headSha <<<"$run")" == "$VERIFIED_SHA" && "$(jq -r .headBranch <<<"$run")" == "$GITHUB_REF_NAME" ]]
-          cd "$RUNNER_TEMP"
-          if ! gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_ARTIFACT/zip" > setup.zip 2> artifact-error.log; then
-            echo '::error::The hosted runner could not retrieve the verified artifact.'
-            exit 1
-          fi
-          echo "$VERIFIED_ZIP_SHA  setup.zip" | sha256sum -c --strict
-          installer=NexusDownloader-0.2.0-Windows-x64-Setup.exe
-          [[ "$(unzip -Z1 setup.zip | LC_ALL=C sort)" == "$(printf '%s\n' "$installer" "$installer.sha256")" ]]
-          unzip -qq setup.zip
-          sha256sum -c --strict "$installer.sha256"
-          expected=$(sha256sum "$installer" | cut -d' ' -f1)
-          cat > public.pem <<'CERTIFICATE'
-          -----BEGIN CERTIFICATE-----
-          MIIENzCCAp+gAwIBAgIUf5DpDSHq61lQtWZEPpOhbAVOePcwDQYJKoZIhvcNAQEL
-          BQAwKzEpMCcGA1UEAwwgTmV4dXMgV2luZG93cyBpbnN0YWxsZXIgdHJhbnNmZXIw
-          HhcNMjYxMTE5MTY1MDE1WhcNMjYxMTIxMTY1MDE1WjArMSkwJwYDVQQDDCBOZXh1
-          cyBXaW5kb3dzIGluc3RhbGxlciB0cmFuc2ZlcjCCAaIwDQYJKoZIhvcNAQEBBQAD
-          ggGPADCCAYoCggGBAKtp1fJAoVhBcB5JjGwGnHzIHohIquC8gyvMx7/B5UP3KZw8
-          lKPTsR89sus7bM+AtYQHHexorZaY8BEw/KbU6smfgGAzp3xZ5cFBVUKdLdBIp8hy
-          2FVeoXSHK8P/+rRCs/RzXkaKBvhkg4osOxOETVtYZh2wuPhy1Xd+gZiDe2XA17AW
-          MDDDCdooeNuTAB03j+FxKiW+Mgp+NPguoL84tNQjuD/gUUaJ7D/p0L8LLWYS0RqF
-          RCOHElIjORqjc/nUewKc57wXKPlmIsJYYhWybQpqlS5AlLo7q8YGM5oYW0D7j4x4
-          VHpL7koCOBlTBkN9hkcqXtlUkgMjBqmwJtqEDsy+FWaE5mpP8BEzlvWSS6HC9p9l
-          CEVfqRGqlq5xo8sK+Ev1NM/fHwgpuhEHhKJ2ugZ3QyzT1joJXkf16m5LqzkYQNgn
-          9gGdbXWLTu+cdFxNrzH9UMUGXcRDei3H82vNZjwv7NxLTMo5cLlSveMHT8roH+Et
-          rFrT4lVvh/eC7ITaJwIDAQABo1MwUTAdBgNVHQ4EFgQUbpebXSoZeu8dAoXwlrAu
-          TjMrdA4wHwYDVR0jBBgwFoAUbpebXSoZeu8dAoXwlrAuTjMrdA4wDwYDVR0TAQH/
-          BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAYEAGQ+TWg0TI2rnSADHB7VuWAcesb0f
-          /xiLWeS3ORdjgy22hRVz54znKiMEYfzozQotm5RwyXGTRHRdYV9ud6NYBB4R9nsd
-          rABYjMI/TgomZ9v7x8m8rr6a7OsAjC+uvtx6CWkg/FHtLJm1RLCG3TUsAKavsunx
-          N5+8HZqdUKF5KohC1y0omEu3tCVpBtBEaBbAczYLivhlOFTGwYpGLS9AZy3LlogZ
-          xwPcHjYDk8Kp/7IR8B9qQH6eXDvT85zXj06Zg385KljG4NXemu3URuRfLGvgZnSj
-          swpYt5Vv9LmiUevGF/0zxfUwt9loaNWJrsRz8ajPPkU/IzDSGa2EHSBM2Lkq+c6D
-          tk8voWHZ8Z+KQTVXU/lgJFR+k/22ypXjHPvWyBR0tYnuEVpKQrsLCr0dGrmzxqEq
-          u1pR6yX5Q585SvJIwbtpdFbloQGeHYatV+Fo+OdCV1WCB5Bwyw8v3TGd7iOuN9h5
-          XkKIYLp+PcfMag6KciVxje+rXqjZKcGj4Qtt
-          -----END CERTIFICATE-----
-          CERTIFICATE
-          openssl cms -encrypt -binary -aes256 -in "$installer" -outform DER -out setup.der public.pem
-          cipher=$(sha256sum setup.der | cut -d' ' -f1)
-          split -b 640k -d -a 3 setup.der part-
-          parts=()
-          for part in part-*; do
-            id=$(python3 -c 'import base64,json,sys; print(json.dumps({"encoding":"base64","content":base64.b64encode(sys.stdin.buffer.read()).decode()}))' <"$part" \
-              | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
-            [[ "$id" == "$(git hash-object "$part")" ]]
-            parts+=("$id")
-          done
-          printf '::notice title=Verified installer transfer::%s %s %s\n' "$expected" "$cipher" "${parts[*]}"

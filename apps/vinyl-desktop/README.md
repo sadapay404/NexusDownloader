@@ -29,7 +29,8 @@ pnpm test
 pnpm build
 pnpm exec playwright install chromium
 pnpm test:ui
-pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked
+$argsForTauri = @('node_modules/@tauri-apps/cli/tauri.js', 'build', '--target', 'x86_64-pc-windows-msvc', '--bundles', 'nsis', '--ci', '--no-sign', '--', '--locked')
+node @argsForTauri
 ```
 
 On a **fresh disposable Windows user/VM** with English UI, run the installer verifier. It checks PE architecture/identity, legacy-install protection, per-user registration, Start shortcut ownership and MIT notice; opens the installed Tauri UI and verifies a byte-identical MP4 saved through the actual native yt-dlp path; then checks uninstallation doesn't touch that saved file. It writes a renamed deliverable + SHA‑256 only after those checks pass. This local synthetic sample is intentionally not a YouTube availability test.

@@ -55,14 +55,21 @@ jobs:
           pnpm build
           pnpm exec playwright install chromium
           pnpm test:ui
+      - name: Cache locked Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: apps/vinyl-desktop/src-tauri -> target
+          cache-on-failure: 'true'
       - name: Build Tauri x64 NSIS Setup
         shell: pwsh
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'tauri-build.log'
-          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked 2>&1 | Tee-Object -FilePath $log
+          # Splat a literal separator: PowerShell otherwise strips bare -- before cargo args.
+          $argsForTauri = @('node_modules/@tauri-apps/cli/tauri.js', 'build', '--target', 'x86_64-pc-windows-msvc', '--bundles', 'nsis', '--ci', '--no-sign', '--', '--locked')
+          node @argsForTauri 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
             $code = $LASTEXITCODE
-            $summary = ((Get-Content $log -Tail 28) -join '%0A').Replace("`r", '')
+            $summary = ((Get-Content $log -Tail 28) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Tauri x64 build failed::$summary"
             exit $code
           }

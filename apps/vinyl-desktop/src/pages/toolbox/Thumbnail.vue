@@ -1,0 +1,207 @@
+<script setup lang="ts">
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { showErrorDialog, sanitizeFilename } from "@/utils/format";
+import { isValidUrl } from "@/utils/validate";
+import { useSettingStore } from "@/stores/setting";
+import { useStatusStore } from "@/stores/status";
+import { useVideoStore } from "@/stores/video";
+import { goToolList } from "@/utils/toolbox";
+import { useToolTask } from "@/composables/useToolTask";
+import { useI18n } from "vue-i18n";
+import type { ThumbnailInfo, VideoInfo } from "@/types";
+
+const { t } = useI18n();
+const router = useRouter();
+const settingStore = useSettingStore();
+const statusStore = useStatusStore();
+const videoStore = useVideoStore();
+
+const goBack = () => goToolList(router);
+
+const url = ref("");
+const {
+  state: taskState,
+  result: taskResult,
+  running: loading,
+  start,
+  cancel,
+} = useToolTask<VideoInfo>("thumbnail");
+const thumbnails = ref<ThumbnailInfo[]>([]);
+const videoTitle = ref("");
+const savingId = ref<string | null>(null);
+
+const urlValid = computed(() => isValidUrl(url.value.trim()));
+
+/** 获取缩略图文件扩展名 */
+const getExtFromUrl = (url: string): string => {
+  try {
+    const pathname = new URL(url).pathname;
+    const ext = pathname.split(".").pop()?.toLowerCase();
+    if (ext && ["jpg", "jpeg", "png", "webp"].includes(ext)) return ext;
+  } catch {
+    // ignore
+  }
+  return "jpg";
+};
+
+/** 获取分辨率显示文本 */
+const getResolutionLabel = (thumb: ThumbnailInfo): string => {
+  if (thumb.width && thumb.height) return `${thumb.width} x ${thumb.height}`;
+  if (thumb.resolution) return thumb.resolution;
+  return t("common.unknown");
+};
+
+/** 获取视频信息并提取封面列表 */
+const handleFetch = async () => {
+  const trimmedUrl = url.value.trim();
+  try {
+    const { cookieFile, cookieBrowser } = await videoStore.getCookieArgs();
+    await start(trimmedUrl, {
+      cookieFile,
+      cookieBrowser,
+      proxy: settingStore.proxy || null,
+    });
+  } catch (e: unknown) {
+    const msg = String(e);
+    if (/err_ytdlp_not_installed/.test(msg)) {
+      statusStore.showYtdlpSetupModal = true;
+    } else if (/sign in|cookies/i.test(msg)) {
+      window.$message.warning(t("cookie.verificationDesc"));
+      statusStore.showCookieModal = true;
+    } else {
+      showErrorDialog(msg);
+    }
+  }
+};
+
+const handleStop = async () => {
+  try {
+    await cancel();
+  } catch (e: unknown) {
+    showErrorDialog(String(e));
+  }
+};
+
+watch(taskState, (state) => {
+  if (state?.url) url.value = state.url;
+});
+
+watch(taskResult, (info) => {
+  if (!info) return;
+  videoTitle.value = info.title || "";
+  const seen = new Set<string>();
+  thumbnails.value = (info.thumbnails || [])
+    .filter((item) => item.url && item.width && item.height)
+    .filter((item) => {
+      const key = `${item.width}x${item.height}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0));
+  if (thumbnails.value.length === 0 && info.thumbnail) {
+    thumbnails.value = [{ url: info.thumbnail, id: "default" }];
+  }
+  if (thumbnails.value.length === 0) window.$message.warning(t("toolbox.noThumbnailFound"));
+});
+
+/** 另存为 */
+const handleSave = async (thumb: ThumbnailInfo) => {
+  const ext = getExtFromUrl(thumb.url);
+  const defaultName = videoTitle.value
+    ? `${sanitizeFilename(videoTitle.value).slice(0, 200)}.${ext}`
+    : `thumbnail.${ext}`;
+
+  const filePath = await save({
+    title: t("toolbox.saveThumbnail"),
+    defaultPath: defaultName,
+    filters: [{ name: t("toolbox.imageFiles"), extensions: [ext, "jpg", "png", "webp"] }],
+  });
+  if (!filePath) return;
+
+  const id = thumb.id || thumb.url;
+  savingId.value = id;
+  try {
+    await invoke("tool_save_thumbnail", {
+      url: thumb.url,
+      filePath,
+      proxy: settingStore.proxy || null,
+    });
+    window.$message.success(t("toolbox.thumbnailSaved"));
+  } catch (e: unknown) {
+    window.$message.error(t("common.saveFailed", { e }));
+  } finally {
+    savingId.value = null;
+  }
+};
+</script>
+
+<template>
+  <n-flex vertical :size="12">
+    <n-flex align="center" :size="8">
+      <n-button strong secondary size="small" @click="goBack">
+        <template #icon>
+          <n-icon><icon-mdi-arrow-left /></n-icon>
+        </template>
+        {{ $t("common.back") }}
+      </n-button>
+      <n-text strong style="font-size: 15px">{{ $t("toolbox.thumbnailTitle") }}</n-text>
+    </n-flex>
+
+    <n-card size="small">
+      <n-flex vertical :size="12">
+        <n-text depth="3" style="font-size: 13px">
+          {{ $t("toolbox.thumbnailPageDesc") }}
+        </n-text>
+        <ToolUrlInput v-model="url" />
+        <ToolTaskActions
+          :loading="loading"
+          :disabled="!urlValid"
+          @fetch="handleFetch"
+          @stop="handleStop"
+        >
+          <template #icon>
+            <n-icon><icon-mdi-image-search /></n-icon>
+          </template>
+          {{ $t("toolbox.fetchThumbnails") }}
+        </ToolTaskActions>
+      </n-flex>
+    </n-card>
+
+    <n-card
+      v-if="thumbnails.length"
+      size="small"
+      :title="$t('toolbox.thumbnailCount', { n: thumbnails.length })"
+    >
+      <n-list hoverable clickable bordered>
+        <n-list-item v-for="thumb in thumbnails" :key="thumb.id || thumb.url">
+          <n-flex align="center" :size="12" :wrap="false">
+            <ThumbnailPreview
+              :src="thumb.url"
+              lazy
+              preview-disabled
+              width="120"
+              height="68"
+              object-fit="cover"
+              style="border-radius: 4px; flex-shrink: 0"
+            />
+            <n-flex align="center" justify="space-between" style="flex: 1; min-width: 0">
+              <n-text style="font-size: 13px">{{ getResolutionLabel(thumb) }}</n-text>
+              <n-button
+                size="small"
+                :loading="savingId === (thumb.id || thumb.url)"
+                @click="handleSave(thumb)"
+              >
+                <template #icon>
+                  <n-icon><icon-mdi-content-save-outline /></n-icon>
+                </template>
+                {{ $t("common.saveAs") }}
+              </n-button>
+            </n-flex>
+          </n-flex>
+        </n-list-item>
+      </n-list>
+    </n-card>
+  </n-flex>
+</template>

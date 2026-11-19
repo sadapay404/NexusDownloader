@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NexusDownloader",
+  "version": "0.2.0",
+  "identifier": "com.nexusdownloader.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:15688",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NexusDownloader",
+        "width": 1060,
+        "height": 760,
+        "minWidth": 560,
+        "minHeight": 510,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "NexusDownloader"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "resources": {
+      "../browser-extension": "browser-extension",
+      "../LICENSE": "licenses/yt-dlp-gui-MIT.txt"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "NexusDownloader",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer.nsh"
+      }
+    },
+    "shortDescription": "NexusDownloader",
+    "copyright": "Based on yt-dlp-gui, Copyright (c) 2026 imsyy (MIT)."
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["ytdlp-gui"]
+      }
+    },
+    "updater": {
+      "endpoints": [],
+      "pubkey": ""
+    }
+  },
+  "mainBinaryName": "NexusDownloader"
+}

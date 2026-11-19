@@ -1,0 +1,83 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+img {
+  pointer-events: none;
+}
+
+// n-message
+.n-message-container {
+  bottom: 80px !important;
+}
+
+.v-binder-follower-container {
+  direction: ltr !important;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.25);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.45);
+}
+
+/* Shared Runout materials. The existing light/system setting remains available. */
+:root {
+  --vinyl-accent: #805819;
+  --vinyl-muted: #6e5c47;
+  --vinyl-panel: #fcf9f2;
+  --vinyl-keyline: #d1b887;
+  --vinyl-selection: #f3e5c4;
+}
+:root[data-vinyl-theme="dark"] {
+  color-scheme: dark;
+  --vinyl-accent: #e9c878;
+  --vinyl-muted: #c0b3a1;
+  --vinyl-panel: #211c15e8;
+  --vinyl-keyline: #5e4c2f;
+  --vinyl-selection: #493b22;
+}
+:root[data-vinyl-theme="light"] .app-header .logo-img {
+  padding: 4px;
+  border-radius: 4px;
+  background: #181818;
+}
+:root[data-vinyl-theme="dark"] .app-route-view {
+  background: radial-gradient(ellipse at 75% 4%, #2b24194d, transparent 64%), #121212;
+}
+:root[data-vinyl-theme="dark"] .section-card.n-card {
+  box-shadow:
+    0 7px 22px #0002,
+    inset 0 1px #ede1bb08;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

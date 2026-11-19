@@ -1,0 +1,93 @@
+//! 不属于业务域的应用级 Tauri 命令。
+
+use std::sync::Mutex;
+use tauri::menu::{Menu, MenuItem};
+use tauri::path::BaseDirectory;
+use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+
+use super::cli::CliOpenRequest;
+
+#[derive(Default)]
+pub(crate) struct CliRequestState(Mutex<Option<CliOpenRequest>>);
+
+impl CliRequestState {
+    pub(crate) fn new(request: Option<CliOpenRequest>) -> Self {
+        Self(Mutex::new(request))
+    }
+}
+
+#[tauri::command]
+pub(crate) fn take_cli_open_request(
+    state: tauri::State<'_, CliRequestState>,
+) -> Result<Option<CliOpenRequest>, String> {
+    state
+        .0
+        .lock()
+        .map(|mut request| request.take())
+        .map_err(|e| format!("err_cli_request_state:{}", e))
+}
+
+/// 打开随应用分发的浏览器扩展源码目录，供浏览器直接加载。
+#[tauri::command]
+pub(crate) fn reveal_browser_extension(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        let _ = app.deep_link().register_all();
+    }
+    // 开发期优先打开项目源码目录，生产环境打开打包资源目录
+    let dev_source_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|manifest_parent| manifest_parent.join("browser-extension"));
+
+    let target = if cfg!(debug_assertions) {
+        if let Some(ref source_dir) = dev_source_path {
+            if source_dir.exists() {
+                source_dir.clone()
+            } else {
+                app.path()
+                    .resolve("browser-extension", BaseDirectory::Resource)
+                    .map_err(|error| format!("err_extension_resource:{error}"))?
+            }
+        } else {
+            app.path()
+                .resolve("browser-extension", BaseDirectory::Resource)
+                .map_err(|error| format!("err_extension_resource:{error}"))?
+        }
+    } else {
+        app.path()
+            .resolve("browser-extension", BaseDirectory::Resource)
+            .map_err(|error| format!("err_extension_resource:{error}"))?
+    };
+    let path = target.to_string_lossy().into_owned();
+    app.opener()
+        .open_path(path.clone(), None::<&str>)
+        .map_err(|error| format!("err_open_extension:{error}"))?;
+    Ok(path)
+}
+
+#[tauri::command]
+pub(crate) fn update_tray_menu(
+    app: tauri::AppHandle,
+    show_label: String,
+    quit_label: String,
+) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id("main") {
+        let show = MenuItem::with_id(&app, "show", &show_label, true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        let quit = MenuItem::with_id(&app, "quit", &quit_label, true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        let menu = Menu::with_items(&app, &[&show, &quit]).map_err(|e| e.to_string())?;
+        tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn set_tray_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("main")
+        .ok_or_else(|| "system tray is not available".to_string())?;
+    tray.set_visible(visible).map_err(|e| e.to_string())
+}

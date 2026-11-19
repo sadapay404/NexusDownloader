@@ -1,0 +1,185 @@
+<script setup lang="ts">
+import { useSettingStore } from "@/stores/setting";
+import { useI18n } from "vue-i18n";
+import DownloadDirCard from "@/components/DownloadDirCard.vue";
+
+const show = defineModel<boolean>("show", { required: true });
+const settingStore = useSettingStore();
+const { t } = useI18n();
+
+const qualityOptions = [
+  { label: "2160p", value: 2160 },
+  { label: "1440p", value: 1440 },
+  { label: "1080p", value: 1080 },
+  { label: "720p", value: 720 },
+  { label: "480p", value: 480 },
+  { label: "360p", value: 360 },
+];
+
+/** 与标准界面 ExtraOptionsCard 保持一致：空值显示“不转换 / 不限速”而非“—” */
+const recodeOptions = computed(() => [
+  { label: t("detail.noConversion"), value: "" },
+  { label: "MP4", value: "mp4" },
+  { label: "MKV", value: "mkv" },
+  { label: "WebM", value: "webm" },
+  { label: "MP3", value: "mp3" },
+  { label: "FLAC", value: "flac" },
+]);
+
+const remuxOptions = computed(() => [
+  { label: t("common.default"), value: "" },
+  { label: "MP4", value: "mp4" },
+  { label: "MKV", value: "mkv" },
+  { label: "WebM", value: "webm" },
+  { label: "MOV", value: "mov" },
+]);
+
+const limitRateOptions = computed(() => [
+  { label: t("detail.noLimit"), value: "" },
+  { label: "500K/s", value: "500K" },
+  { label: "1M/s", value: "1M" },
+  { label: "2M/s", value: "2M" },
+  { label: "5M/s", value: "5M" },
+  { label: "10M/s", value: "10M" },
+]);
+</script>
+
+<template>
+  <n-modal
+    v-model:show="show"
+    preset="card"
+    :title="$t('home.quickSettings')"
+    size="small"
+    :bordered="false"
+    content-scrollable
+    :segmented="{ action: 'soft' }"
+    :style="{ width: '500px', maxHeight: '80vh' }"
+  >
+    <n-flex vertical :size="14">
+      <DownloadDirCard plain />
+
+      <n-flex align="center" :size="8">
+        <n-text depth="3" class="option-label">{{ $t("detail.downloadMethod") }}</n-text>
+        <n-radio-group v-model:value="settingStore.quickDownloadMode" size="small">
+          <n-radio-button value="default">{{ $t("common.default") }}</n-radio-button>
+          <n-radio-button value="video">{{ $t("detail.videoOnly") }}</n-radio-button>
+          <n-radio-button value="audio">{{ $t("detail.audioOnly") }}</n-radio-button>
+        </n-radio-group>
+      </n-flex>
+
+      <n-flex v-if="settingStore.quickDownloadMode !== 'audio'" align="center" :size="8">
+        <n-text depth="3" class="option-label">{{ $t("home.maxQuality") }}</n-text>
+        <n-select
+          v-model:value="settingStore.quickMaxHeight"
+          :options="qualityOptions"
+          size="small"
+          class="compact-select"
+        />
+      </n-flex>
+
+      <n-flex :size="16" wrap>
+        <n-flex align="center" :size="8">
+          <n-text depth="3" class="option-label">{{ $t("detail.remuxFormat") }}</n-text>
+          <n-select
+            v-model:value="settingStore.quickRemuxFormat"
+            :options="remuxOptions"
+            size="small"
+            class="compact-select"
+          />
+        </n-flex>
+        <n-flex align="center" :size="8">
+          <n-text depth="3" class="option-label">{{ $t("detail.recodeFormat") }}</n-text>
+          <n-select
+            v-model:value="settingStore.quickRecodeFormat"
+            :options="recodeOptions"
+            size="small"
+            class="compact-select"
+          />
+        </n-flex>
+        <n-flex align="center" :size="8">
+          <n-text depth="3" class="option-label">{{ $t("detail.speedLimit") }}</n-text>
+          <n-select
+            v-model:value="settingStore.quickLimitRate"
+            :options="limitRateOptions"
+            size="small"
+            class="compact-select"
+          />
+        </n-flex>
+      </n-flex>
+
+      <n-flex align="center" :size="8" :wrap="false">
+        <n-text depth="3" class="option-label">{{ $t("detail.ffmpegArgs") }}</n-text>
+        <n-input
+          v-model:value="settingStore.quickFfmpegArgs"
+          :placeholder="$t('detail.ffmpegArgsPlaceholder')"
+          size="small"
+          clearable
+          class="ffmpeg-input"
+        />
+      </n-flex>
+
+      <n-flex align="center" :size="8" :wrap="false">
+        <n-text depth="3" class="option-label">{{ $t("detail.customArgs") }}</n-text>
+        <n-input
+          v-model:value="settingStore.quickCustomArgs"
+          :placeholder="$t('detail.customArgsPlaceholder')"
+          size="small"
+          clearable
+          class="ffmpeg-input"
+        />
+      </n-flex>
+
+      <n-divider style="margin: 0" />
+
+      <n-flex :size="[16, 8]" wrap>
+        <n-checkbox v-model:checked="settingStore.quickEmbedThumbnail" size="small">
+          {{ $t("detail.embedThumbnail") }}
+        </n-checkbox>
+        <n-checkbox v-model:checked="settingStore.quickWriteThumbnail" size="small">
+          {{ $t("detail.writeThumbnail") }}
+        </n-checkbox>
+        <n-checkbox v-model:checked="settingStore.quickWriteDescription" size="small">
+          {{ $t("detail.writeDescription") }}
+        </n-checkbox>
+        <n-checkbox v-model:checked="settingStore.quickEmbedMetadata" size="small">
+          {{ $t("detail.embedMetadata") }}
+        </n-checkbox>
+        <n-checkbox v-model:checked="settingStore.quickEmbedChapters" size="small">
+          {{ $t("detail.embedChapters") }}
+        </n-checkbox>
+        <n-checkbox v-model:checked="settingStore.quickSponsorblockRemove" size="small">
+          {{ $t("detail.skipSponsor") }}
+        </n-checkbox>
+        <n-checkbox v-model:checked="settingStore.quickNoMerge" size="small">
+          {{ $t("detail.noMerge") }}
+        </n-checkbox>
+      </n-flex>
+    </n-flex>
+
+    <template #action>
+      <n-flex justify="end">
+        <n-button size="small" type="primary" @click="show = false">
+          {{ $t("common.save") }}
+        </n-button>
+      </n-flex>
+    </template>
+  </n-modal>
+</template>
+
+<style scoped lang="scss">
+.option-label {
+  min-width: 56px;
+  flex-shrink: 0;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.compact-select {
+  width: 110px;
+}
+
+.ffmpeg-input {
+  min-width: 0;
+  flex: 1;
+}
+</style>

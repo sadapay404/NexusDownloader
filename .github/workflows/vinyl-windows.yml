@@ -1,0 +1,73 @@
+name: Vinyl Windows x64
+
+on:
+  push:
+    branches: [arena/ff958846-nexusdownloader]
+    paths:
+      - 'apps/vinyl-desktop/**'
+      - '.github/workflows/vinyl-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vinyl-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: apps/vinyl-desktop
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      RUSTUP_TOOLCHAIN: '1.100.0-x86_64-pc-windows-msvc'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify pinned downloader sources
+        shell: bash
+        run: sha256sum -c --quiet UPSTREAM-SHA256SUMS
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.22.3'
+      - name: Install Rust and pnpm
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal
+          rustc --version
+          corepack enable pnpm
+          pnpm --version
+          pnpm install --frozen-lockfile
+      - name: Test renderer
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm lint
+          pnpm test
+          pnpm build
+          pnpm exec playwright install chromium
+          pnpm test:ui
+      - name: Build Tauri x64 NSIS Setup
+        shell: pwsh
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked
+      - name: Verify Setup, Start shortcut, native file save and uninstall
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -File -Filter '*_x64-setup.exe')
+          if ($setups.Count -ne 1) { throw 'Expected one Tauri x64 Setup executable' }
+          .\verification\windows\verify-installer.ps1 -Setup $setups[0].FullName -Output "$env:RUNNER_TEMP\NexusDownloader-Windows-x64"
+      - name: Upload verified Setup and SHA-256
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NexusDownloader-Windows-x64
+          path: ${{ runner.temp }}/NexusDownloader-Windows-x64/*
+          if-no-files-found: error
+          retention-days: 14

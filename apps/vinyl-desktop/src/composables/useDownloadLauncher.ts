@@ -1,0 +1,267 @@
+import { invoke } from "@tauri-apps/api/core";
+import { useI18n } from "vue-i18n";
+import {
+  TEMPLATE_ERROR_KEYS,
+  composeOutputTemplate,
+  validateOutputTemplate,
+} from "@/utils/output-template";
+import { useDownloadStore } from "@/stores/download";
+import { useSettingStore } from "@/stores/setting";
+import { useStatusStore } from "@/stores/status";
+import { useVideoStore } from "@/stores/video";
+import { getPlaylistDownloadOptions } from "@/utils/playlist";
+import { isValidTimeRange } from "@/utils/validate";
+import type { DownloadTask, FfmpegStatus, PendingItem } from "@/types";
+
+export type DownloadLaunchResult =
+  | "started"
+  | "queued"
+  | "missing-directory"
+  | "missing-ffmpeg"
+  | "failed";
+
+const timeToSeconds = (timestamp: number): number => {
+  const date = new Date(timestamp);
+  return date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+};
+
+const formatTime = (seconds: number): string => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`;
+};
+
+export const useDownloadLauncher = () => {
+  const { t } = useI18n();
+  const settingStore = useSettingStore();
+  const downloadStore = useDownloadStore();
+  const videoStore = useVideoStore();
+  const statusStore = useStatusStore();
+
+  const buildFormatLabel = (item: PendingItem): string => {
+    const parts: string[] = [];
+    if (item.downloadMode === "audio") {
+      parts.push(t("detail.audioOnly"));
+      const audio = item.audioFormats.find(
+        (format) => format.format_id === item.selectedAudioFormat,
+      );
+      if (audio) parts.push(audio.format_note || audio.ext);
+    } else {
+      const video = item.videoFormats.find(
+        (format) => format.format_id === item.selectedVideoFormat,
+      );
+      if (video?.height) parts.push(`${video.height}p`);
+      if (video?.fps) parts.push(`${video.fps}fps`);
+      if (item.downloadMode === "video") parts.push(t("detail.videoOnly"));
+    }
+
+    if (item.startTime != null || item.endTime != null) {
+      const start = item.startTime != null ? formatTime(timeToSeconds(item.startTime)) : "00:00";
+      const end = item.endTime != null ? formatTime(timeToSeconds(item.endTime)) : t("detail.end");
+      parts.push(`✂${start}-${end}`);
+    }
+    return parts.join(" ") || t("detail.defaultQuality");
+  };
+
+  const createPreparingTask = async (url: string): Promise<string> => {
+    const taskId = `prepare_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await downloadStore.addTask({
+      id: taskId,
+      url,
+      title: url,
+      thumbnail: "",
+      formatLabel: t("downloads.status.preparing"),
+      status: "preparing",
+      percent: 0,
+      speed: "",
+      eta: "",
+      downloaded: "",
+      total: "",
+      logs: [],
+      createdAt: Date.now(),
+      params: {
+        url,
+        downloadDir: settingStore.downloadDir,
+        downloadMode: settingStore.quickDownloadMode,
+        videoFormat: null,
+        audioFormat: null,
+        cookieFile: null,
+        cookieBrowser: null,
+        proxy: settingStore.proxy || null,
+        outputTemplate: null,
+        concurrentFragments: null,
+        noOverwrites: settingStore.noOverwrites,
+        embedSubs: false,
+        embedThumbnail: false,
+        writeThumbnail: false,
+        writeDescription: false,
+        embedMetadata: false,
+        embedChapters: false,
+        sponsorblockRemove: false,
+        extractAudio: false,
+        audioConvertFormat: null,
+        noMerge: false,
+        recodeFormat: null,
+        remuxFormat: null,
+        limitRate: null,
+        ffmpegArgs: null,
+        customArgs: null,
+        subtitles: [],
+        startTime: null,
+        endTime: null,
+        noPlaylist: false,
+        playlistItems: null,
+        liveFromStart: false,
+      },
+    });
+    return taskId;
+  };
+
+  const markPreparationError = async (taskId: string): Promise<void> => {
+    const task = downloadStore.tasks.find((item) => item.id === taskId);
+    if (!task || task.status !== "preparing") return;
+    task.status = "error";
+    task.error = t("home.quickPrepareFailed");
+    // preparing 行已在创建时落库，失败态必须同步回去，否则重启前 DB 里一直是 preparing
+    await downloadStore.updateTask(task);
+  };
+
+  const launchDownload = async (
+    item: PendingItem,
+    preparingTaskId?: string,
+  ): Promise<DownloadLaunchResult> => {
+    const playlistOptions = getPlaylistDownloadOptions(item.isPlaylist, item.selectedPlaylistItems);
+    if (!playlistOptions) return "failed";
+    const startTime = item.startTime != null ? timeToSeconds(item.startTime) : null;
+    const endTime = item.endTime != null ? timeToSeconds(item.endTime) : null;
+    if (
+      !isValidTimeRange(startTime, endTime, item.isPlaylist ? undefined : item.videoInfo.duration)
+    ) {
+      window.$message.error(t("detail.invalidTimeRange"));
+      if (preparingTaskId) await markPreparationError(preparingTaskId);
+      return "failed";
+    }
+    if (!settingStore.downloadDir) {
+      window.$message.warning(t("detail.setDownloadDirFirst"));
+      return "missing-directory";
+    }
+
+    const selectedVideo = item.videoFormats.find(
+      (format) => format.format_id === item.selectedVideoFormat,
+    );
+    const videoHasAudio = Boolean(selectedVideo?.acodec && selectedVideo.acodec !== "none");
+    const extractAudio =
+      item.extractAudio || (item.downloadMode === "audio" && !item.selectedAudioFormat);
+    const requiresFfmpeg =
+      (item.downloadMode === "default" &&
+        (Boolean(item.selectedVideoFormat) || item.selectedAudioFormat.includes("+")) &&
+        (item.isPlaylist || !videoHasAudio || Boolean(item.selectedAudioFormat)) &&
+        !item.noMerge) ||
+      extractAudio ||
+      item.embedSubs ||
+      item.embedThumbnail ||
+      item.embedMetadata ||
+      item.embedChapters ||
+      item.sponsorblockRemove ||
+      Boolean(item.recodeFormat) ||
+      Boolean(item.remuxFormat && item.remuxFormat !== "auto") ||
+      item.startTime != null ||
+      item.endTime != null;
+    if (requiresFfmpeg) {
+      try {
+        const status = await invoke<FfmpegStatus>("get_ffmpeg_status");
+        if (!status.installed || !status.runnable) {
+          statusStore.showFfmpegSetupModal = true;
+          if (preparingTaskId) await markPreparationError(preparingTaskId);
+          return "missing-ffmpeg";
+        }
+      } catch {
+        statusStore.showFfmpegSetupModal = true;
+        if (preparingTaskId) await markPreparationError(preparingTaskId);
+        return "missing-ffmpeg";
+      }
+    }
+
+    const taskId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const { cookieFile, cookieBrowser } = await videoStore.getCookieArgs();
+    const outputTemplate = composeOutputTemplate(
+      settingStore.outputTemplate,
+      settingStore.filenamePrefix,
+      settingStore.filenameSuffix,
+      item.isPlaylist && settingStore.playlistSubfolders,
+    );
+    // 非法文件名模板直接拦截，避免发给 yt-dlp 后报晦涩的格式错误
+    const templateError = validateOutputTemplate(outputTemplate);
+    if (templateError) {
+      window.$message.error(
+        t(TEMPLATE_ERROR_KEYS[templateError.code], { char: templateError.char }),
+      );
+      if (preparingTaskId) await markPreparationError(preparingTaskId);
+      return "failed";
+    }
+    const params = {
+      url: item.url,
+      downloadDir: settingStore.downloadDir,
+      downloadMode: item.downloadMode,
+      videoFormat: item.selectedVideoFormat || null,
+      videoHasAudio,
+      audioFormat: item.selectedAudioFormat || null,
+      cookieFile,
+      cookieBrowser,
+      proxy: settingStore.proxy || null,
+      outputTemplate,
+      concurrentFragments: settingStore.concurrentFragments || null,
+      noOverwrites: settingStore.noOverwrites,
+      embedSubs: item.embedSubs,
+      embedThumbnail: item.embedThumbnail,
+      writeThumbnail: item.writeThumbnail,
+      writeDescription: item.writeDescription,
+      embedMetadata: item.embedMetadata,
+      embedChapters: item.embedChapters,
+      sponsorblockRemove: item.sponsorblockRemove,
+      extractAudio,
+      audioConvertFormat: item.audioConvertFormat || null,
+      noMerge: item.noMerge,
+      recodeFormat: item.recodeFormat || null,
+      remuxFormat: item.remuxFormat || null,
+      limitRate: item.limitRate || null,
+      ffmpegArgs: item.ffmpegArgs || null,
+      customArgs: item.customArgs || null,
+      subtitles: item.selectedSubtitles,
+      startTime,
+      endTime,
+      forceKeyframesAtCuts: Boolean(item.forceKeyframesAtCuts),
+      liveFromStart: item.liveFromStart,
+      ...playlistOptions,
+    };
+    const task: DownloadTask = {
+      id: taskId,
+      url: item.url,
+      title: item.videoInfo.title || t("detail.unknownVideo"),
+      thumbnail: item.videoInfo.thumbnail || "",
+      formatLabel: buildFormatLabel(item),
+      status: "queued",
+      percent: 0,
+      speed: "",
+      eta: "",
+      downloaded: "",
+      total: "",
+      logs: [],
+      createdAt: Date.now(),
+      params,
+    };
+
+    const result = await downloadStore.addTask(task, preparingTaskId);
+    if (result === "failed") {
+      const failedTask = downloadStore.tasks.find((candidate) => candidate.id === taskId);
+      if (failedTask?.status === "error") {
+        window.$message.error(failedTask.error || t("detail.startDownloadFailed"));
+      }
+    }
+    return result === "preparing" ? "failed" : result;
+  };
+
+  return { createPreparingTask, markPreparationError, launchDownload };
+};

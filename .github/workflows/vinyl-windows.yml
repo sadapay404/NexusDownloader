@@ -57,13 +57,27 @@ jobs:
           pnpm test:ui
       - name: Build Tauri x64 NSIS Setup
         shell: pwsh
-        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'tauri-build.log'
+          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $summary = ((Get-Content $log -Tail 28) -join '%0A').Replace("`r", '')
+            Write-Output "::error title=Tauri x64 build failed::$summary"
+            exit $code
+          }
       - name: Verify Setup, Start shortcut, native file save and uninstall
         shell: pwsh
         run: |
           $setups = @(Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -File -Filter '*_x64-setup.exe')
           if ($setups.Count -ne 1) { throw 'Expected one Tauri x64 Setup executable' }
-          .\verification\windows\verify-installer.ps1 -Setup $setups[0].FullName -Output "$env:RUNNER_TEMP\NexusDownloader-Windows-x64"
+          try {
+            .\verification\windows\verify-installer.ps1 -Setup $setups[0].FullName -Output "$env:RUNNER_TEMP\NexusDownloader-Windows-x64"
+          } catch {
+            $summary = $_.ToString().Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows installer verification failed::$summary"
+            throw
+          }
       - name: Upload verified Setup and SHA-256
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

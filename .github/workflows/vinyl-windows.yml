@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: vinyl-windows-${{ github.ref }}
@@ -18,7 +17,6 @@ concurrency:
 
 jobs:
   windows-x64:
-    if: ${{ false }} # Diagnostic-only run; restored after retrieving the failed step log.
     runs-on: windows-2025
     timeout-minutes: 50
     defaults:
@@ -81,7 +79,7 @@ jobs:
           $setups = @(Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -File -Filter '*_x64-setup.exe')
           if ($setups.Count -ne 1) { throw 'Expected one Tauri x64 Setup executable' }
           try {
-            .\verification\windows\verify-installer.ps1 -Setup $setups[0].FullName -Output "$env:RUNNER_TEMP\NexusDownloader-Windows-x64"
+            .\verification\windows\verify-installer.ps1 -Setup $setups[0].FullName -Output "$env:RUNNER_TEMP\NexusDownloader-Windows-x64" -UseRunnerWebView2Policy
           } catch {
             $summary = $_.ToString().Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Windows installer verification failed::$summary"
@@ -94,21 +92,3 @@ jobs:
           path: ${{ runner.temp }}/NexusDownloader-Windows-x64/*
           if-no-files-found: error
           retention-days: 14
-  read-smoke-result:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 4
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Read approved Windows run's smoke-test error
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh run view 44569653105 -R "$GITHUB_REPOSITORY" --log-failed > "$RUNNER_TEMP/windows-smoke.log"
-          python3 - "$RUNNER_TEMP/windows-smoke.log" <<'PY'
-          import pathlib, sys
-          lines = pathlib.Path(sys.argv[1]).read_text(errors='replace').splitlines()
-          selected = '\n'.join(line.split('\t')[-1] for line in lines if 'Verify Setup' in line)[-8500:]
-          summary = selected.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-          print(f'::notice title=Windows smoke-test error::{summary}')
-          PY

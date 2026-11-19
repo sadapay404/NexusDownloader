@@ -57,6 +57,21 @@ test("clears the countdown immediately when cancelled", () => {
   expect(elapsed).not.toHaveBeenCalled();
 });
 
+test("starting again after cancellation gives a fresh five seconds", () => {
+  const { seconds, start, stop, elapsed } = countdown();
+  start();
+  vi.advanceTimersByTime(2000);
+  stop();
+  vi.advanceTimersByTime(12_000);
+
+  start();
+  expect(seconds.value).toBe(5);
+  vi.advanceTimersByTime(4999);
+  expect(elapsed).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(81);
+  expect(elapsed).toHaveBeenCalledTimes(1);
+});
+
 test("focus loss does not spend any of the remaining time", () => {
   const { paused, start, elapsed } = countdown();
   start();

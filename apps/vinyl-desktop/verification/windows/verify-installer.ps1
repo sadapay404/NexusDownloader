@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Setup,
-  [Parameter(Mandatory = $true)][string]$Output
+  [Parameter(Mandatory = $true)][string]$Output,
+  [switch]$UseRunnerWebView2Policy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +28,48 @@ function Get-PeMachine([string]$path) {
     if ($reader.ReadUInt32() -ne 0x4550) { throw "No PE header: $path" }
     return $reader.ReadUInt16()
   } finally { $reader.Dispose() }
+}
+
+function Invoke-NativeSaveTest([string]$App) {
+  $PSNativeCommandUseErrorActionPreference = $false
+  $policyPath = 'HKLM:\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+  $exeName = [IO.Path]::GetFileName($App)
+  $wrotePolicy = $false
+  $madeKey = $false
+  $argsForSmoke = @((Join-Path $PSScriptRoot 'native-download.mjs'), $App, $saved, $ytdlp)
+  try {
+    if ($UseRunnerWebView2Policy) {
+      if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+        throw 'The CI WebView2 policy is only for a disposable GitHub-hosted runner.'
+      }
+      # Runtime 150+ ignores additional browser arguments from the environment of elevated hosts.
+      # https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645
+      # Scope the loopback test port to this executable on this VM, never in the shipped app.
+      $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+      try {
+        $listener.Start()
+        $port = $listener.LocalEndpoint.Port
+      } finally { $listener.Stop() }
+      if (-not (Test-Path -LiteralPath $policyPath)) {
+        New-Item -Path $policyPath -Force | Out-Null
+        $madeKey = $true
+      }
+      if ((Get-Item -LiteralPath $policyPath).GetValueNames() -contains $exeName) {
+        throw "An existing WebView2 policy for $exeName must not be overwritten."
+      }
+      New-ItemProperty -LiteralPath $policyPath -Name $exeName -PropertyType String -Value "--remote-debugging-port=$port" | Out-Null
+      $wrotePolicy = $true
+      $argsForSmoke += $port.ToString()
+    }
+    node @argsForSmoke 2>&1 | Tee-Object -Variable nativeOutput
+    if ($LASTEXITCODE -ne 0) {
+      $detail = (($nativeOutput | Select-Object -Last 18) -join "`n").Trim()
+      throw "Native Windows smoke failed: $detail"
+    }
+  } finally {
+    if ($wrotePolicy) { Remove-ItemProperty -LiteralPath $policyPath -Name $exeName }
+    if ($madeKey -and (Get-Item -LiteralPath $policyPath).ValueCount -eq 0) { Remove-Item -LiteralPath $policyPath }
+  }
 }
 
 if ((Test-Path $regKey) -or (Test-Path $install) -or (Test-Path (Join-Path $desktop 'NexusDownloader.lnk')) -or
@@ -73,8 +116,7 @@ try {
   if ((Get-FileHash -LiteralPath $ytdlp).Hash -ne 'f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d') {
     throw 'Smoke-test yt-dlp does not match the pinned release hash'
   }
-  node (Join-Path $PSScriptRoot 'native-download.mjs') $shortcut.TargetPath $saved $ytdlp
-  if ($LASTEXITCODE -ne 0) { throw 'Native media save failed' }
+  Invoke-NativeSaveTest -App $shortcut.TargetPath
   $savedFile = (Get-ChildItem -File -LiteralPath $saved).FullName
   $beforeUninstall = (Get-FileHash -LiteralPath $savedFile).Hash
 

@@ -31,6 +31,7 @@ export function useVinylCountdown(onElapsed: () => void) {
   function stop() {
     if (interval !== undefined) window.clearInterval(interval);
     interval = undefined;
+    last = null;
     seconds.value = null;
     paused.value = false;
     window.removeEventListener("focus", syncFocus);

@@ -1,0 +1,82 @@
+name: Retrieve verified Vinyl Setup
+
+on:
+  push:
+    branches: [arena/ff958846-nexusdownloader]
+    paths: ['.github/workflows/vinyl-setup-handoff.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  retrieve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN: '45327723644'
+      SOURCE_SHA: '6731d4581f1b031dd6479282644aab207e643f1d'
+      SOURCE_ARTIFACT: '14890892138'
+      SOURCE_ZIP_SHA: '0614ec4b6c9d7167cfae4bed3b67f54e12376615c3740ef3d97b8b532b92e575'
+    steps:
+      - name: Transfer only the verified Setup, encrypted for the workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -c 0
+          gh run watch "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --interval 20 --exit-status >/dev/null
+          run=$(gh run view "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha,headBranch)
+          jq -e --arg sha "$SOURCE_SHA" --arg branch "$GITHUB_REF_NAME" '.status == "completed" and .conclusion == "success" and .headSha == $sha and .headBranch == $branch' <<<"$run" >/dev/null
+          cd "$(mktemp -d "$RUNNER_TEMP/verified-setup.XXXXXX")"
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT/zip" > setup.zip 2> download.err; then
+            echo '::error::GitHub runner could not retrieve the verified artifact.'
+            exit 1
+          fi
+          printf '%s  setup.zip\n' "$SOURCE_ZIP_SHA" | sha256sum -c --strict
+          name=NexusDownloader-0.2.0-Windows-x64-Setup.exe
+          [[ "$(unzip -Z1 setup.zip | LC_ALL=C sort)" == "$(printf '%s\n' "$name" "$name.sha256")" ]]
+          unzip -qq setup.zip "$name" "$name.sha256"
+          size=$(stat -c '%s' "$name")
+          [[ "$size" -gt 0 && "$size" -lt 40000000 ]]
+          expected=$(sha256sum "$name" | cut -d' ' -f1)
+          [[ "$(tr -d '\r' < "$name.sha256")" == "$expected  $name" ]]
+          cat > public.pem <<'CERTIFICATE'
+          -----BEGIN CERTIFICATE-----
+          MIIERzCCAq+gAwIBAgIUFSGlWNXpGxjpGkBQU5bHPqeABpwwDQYJKoZIhvcNAQEL
+          BQAwMzExMC8GA1UEAwwoTmV4dXNEb3dubG9hZGVyIHZlcmlmaWVkIFNldHVwIHJl
+          dHJpZXZhbDAeFw0yNjExMjQwNDQ3MTlaFw0yNjExMjYwNDQ3MTlaMDMxMTAvBgNV
+          BAMMKE5leHVzRG93bmxvYWRlciB2ZXJpZmllZCBTZXR1cCByZXRyaWV2YWwwggGi
+          MA0GCSqGSIb3DQEBAQUAA4IBjwAwggGKAoIBgQDHHaj1v4GVAu4rgD6j41NN61FH
+          aXUjFWdGErkPQy+ry12XN1zmkFU9oCC4WqEMGx2EXUhiih7WbE3rdtASe15tcdyP
+          kOjniKcwVtmxq5BeeEjUNYo3mlzvtIgiGKCN5mljvc4QfmwYuFoQgsCH5XNd0ymP
+          6cp25fr90hYes9KGcabkaLYrejsnGiXo4XbqbQHRluLNP95fNjVzaj/J2RCrs39z
+          +JqRIOB5BN6prPxB5Qo5lbi/NVF8KcNdf5/LYbFpIwJ8Gl6oA8dT22sRjkAIEw7i
+          H47fxIpIJSZEAoJ+ypWO4R4ndw4NkjLJw8h8lkQpa8NPeCVYSbK5cFynBtVIFrXQ
+          a/ZuDUeXhrl9+TNy3zniA2DVKDlVCvPQydEztzD1FEmbDX2flmHrnEDU1cDyvW3U
+          69F/cUj9tghrlqK41bGIKLwIv527JCqctzgopZnxFoGh+6Ik8fdF+Rv3xVAu3fsz
+          fdnQUjzebjLVAA8tD6+DQ6JO5pxV3dwarHwH1D8CAwEAAaNTMFEwHQYDVR0OBBYE
+          FBXX//ymM/uwYTcOFK82gTmU1QpFMB8GA1UdIwQYMBaAFBXX//ymM/uwYTcOFK82
+          gTmU1QpFMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggGBAKDH16y+
+          MacXoiurmlvWNfqJht/lkvcB6by3Xov6qcofZN0v+4XgiRtmhrTzS7GTU/rNO3t0
+          9HzrgDIv357wN0YqewFxqxHmW9hdgEYQRsNNfPD1DrXZJTqg9K1M9KUeXoIQ8PoU
+          vA7hWR/05LmYECzKB2dAZ4Qz9qmjZT1tutGa05V3Nd1bL4ld1oKzH6BJ9Q6Isui6
+          pvxxy7cKaj2qAgCgkJBnpvgM0yWuz12nnWMhUcKLfIrjK4sItBpnq57Ocgfc+t9q
+          errQxVdfjUdDRBPS1QkXbWxAKIxBnLLsqkE0s2+fQ++VRhGkKQsfAaJGKr1xIC89
+          GlGsF0/Oisr5Z6JNKOoPzEX6AfIM5Ah6Jm7U9lgfOZMM4oEExwSJg1AvnFAZaBAN
+          RIBA9FnxT/3Ggd4pQ7flDoKBD3sSm4QJVp/MuaXY0cb55OfBaGLCA+jBhhCUu0Nk
+          S+VbD94Cxhezb38YUtwXltg+DZaxzcAGLSumKARjG6Kg+LDA8F5c5f5bww==
+          -----END CERTIFICATE-----
+          CERTIFICATE
+          openssl cms -encrypt -binary -aes256 -in "$name" -outform DER -out setup.der public.pem
+          encrypted_sha=$(sha256sum setup.der | cut -d' ' -f1)
+          split -b 640k -d -a 3 setup.der chunk-
+          blobs=()
+          for piece in chunk-*; do
+            id=$(python3 -c 'import base64,json,sys;print(json.dumps({"encoding":"base64","content":base64.b64encode(sys.stdin.buffer.read()).decode("ascii")}))' < "$piece" \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
+            [[ "$id" == "$(git hash-object "$piece")" ]]
+            blobs+=("$id")
+          done
+          printf '::notice title=Verified Vinyl Setup 45327723644::%s %s %s %s\n' "$expected" "$encrypted_sha" "$size" "${blobs[*]}"

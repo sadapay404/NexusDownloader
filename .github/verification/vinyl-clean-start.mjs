@@ -16,12 +16,21 @@ const saved = join(work, "Normal Downloads");
 const priorMedia = join(work, "Prior Media", "existing.mp4");
 await mkdir(saved, { recursive: true });
 const served = new Map([["/vinyl-test.mp4", ["video/mp4", bytes]]]);
+const missingRequests = new Set();
 const server = createServer((req, res) => {
-  const payload = served.get(req.url);
-  if (!payload) { res.writeHead(404).end(); return; }
+  const path = new URL(req.url, "http://localhost").pathname;
+  const payload = served.get(path);
+  if (!payload) { missingRequests.add(path); res.writeHead(404).end(); return; }
   const [type, body] = payload;
-  res.writeHead(200, { "Content-Type": type, "Content-Length": body.length });
-  res.end(req.method === "HEAD" ? undefined : body);
+  const range = req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
+  const start = range ? Number(range[1]) : 0;
+  const end = range?.[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1;
+  if (start > end) { res.writeHead(416, { "Content-Range": `bytes */${body.length}` }).end(); return; }
+  res.writeHead(range ? 206 : 200, {
+    "Content-Type": type, "Content-Length": end - start + 1, "Accept-Ranges": "bytes",
+    ...(range ? { "Content-Range": `bytes ${start}-${end}/${body.length}` } : {}),
+  });
+  res.end(req.method === "HEAD" ? undefined : body.subarray(start, end + 1));
 });
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
@@ -62,6 +71,9 @@ async function check() {
       const setting = JSON.parse(localStorage.getItem("setting") ?? "{}");
       localStorage.setItem("setting", JSON.stringify({ ...setting, themeMode: "light", downloadDir: directory }));
     }, saved);
+    await page.reload();
+    await expect(page.getByRole("textbox", { name: "Video link" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("setting") ?? "{}").downloadDir)).toBe(saved);
     console.log("Prior Vinyl saved a sample history row, media file and preferences.");
     return;
   }
@@ -155,11 +167,16 @@ try {
   await check();
 } catch (error) {
   console.error(`Clean-start failure (${stage}): ${describe(error)}`);
+  if (missingRequests.size) console.error(`Fixture HTTP 404: ${Array.from(missingRequests).slice(0, 8).join(", ")}`);
   for (const detail of diagnostics.slice(0, 5)) console.error(detail);
   const body = await page?.locator("body").innerText({ timeout: 1500 }).catch(() => "");
   if (body) console.error(`Installed UI: ${body.trim().replace(/\s+/g, " ").slice(-1300)}`);
   process.exitCode = 1;
 } finally {
+  if (page && child.exitCode === null) {
+    void invoke("plugin:process|exit", { code: 0 }).catch(() => {});
+    await Promise.race([stopped, delay(6000, undefined, { ref: false })]);
+  }
   await browser?.close().catch(() => {});
   if (child.pid && child.exitCode === null) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 5000 });
   await Promise.race([stopped, delay(5000, undefined, { ref: false })]);

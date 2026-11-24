@@ -72,7 +72,17 @@ jobs:
           cache-on-failure: 'true'
       - name: Test locked Rust backend on Windows
         shell: pwsh
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'vinyl-rust-tests.log'
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $summary = (Get-Content -LiteralPath $log -Tail 45) -join "`n"
+            if ($summary.Length -gt 3200) { $summary = $summary.Substring($summary.Length - 3200) }
+            $summary = $summary.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Vinyl Windows Rust verification failed::$summary"
+            exit $code
+          }
       - name: Build Tauri x64 NSIS Setup
         shell: pwsh
         run: |

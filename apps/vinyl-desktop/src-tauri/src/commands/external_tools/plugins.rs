@@ -124,7 +124,10 @@ fn inspect_plugin_types(path: &Path) -> Result<Vec<String>, String> {
 
     for i in 0..archive.len() {
         if let Ok(entry) = archive.by_index_raw(i) {
-            let name = entry.name().replace('\\', "/");
+            let name = entry
+                .name()
+                .map_err(|_| "err_plugin_layout".to_string())?
+                .replace('\\', "/");
             if name.contains("yt_dlp_plugins/extractor/") && name.ends_with(".py") {
                 has_extractor = true;
             }

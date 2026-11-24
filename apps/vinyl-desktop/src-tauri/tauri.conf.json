@@ -21,7 +21,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost ws://localhost:15688; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'"
     },
     "trayIcon": {
       "iconPath": "icons/icon.png",
@@ -31,7 +32,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "createUpdaterArtifacts": false,
     "macOS": {
       "signingIdentity": "-"
@@ -61,12 +64,10 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ytdlp-gui"]
+        "schemes": [
+          "ytdlp-gui"
+        ]
       }
-    },
-    "updater": {
-      "endpoints": [],
-      "pubkey": ""
     }
   },
   "mainBinaryName": "NexusDownloader"

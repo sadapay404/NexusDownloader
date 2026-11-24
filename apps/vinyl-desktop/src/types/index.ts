@@ -155,6 +155,7 @@ export interface DownloadTaskParams {
   downloadMode: string;
   videoFormat: string | null;
   videoHasAudio?: boolean;
+  preferVideo?: boolean;
   audioFormat: string | null;
   cookieFile: string | null;
   cookieBrowser: string | null;

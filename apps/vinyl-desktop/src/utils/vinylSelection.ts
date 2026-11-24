@@ -36,9 +36,22 @@ export function clipboardVideo(value: string): { url: string; id: string } | nul
   }
 }
 
+export function resolutionTier(height?: number | null, width?: number | null): number | null {
+  if (!height || !Number.isFinite(height) || height <= 0) return null;
+  return width && Number.isFinite(width) && width > 0 ? Math.min(width, height) : height;
+}
+
 export function nativeTier(format: VideoFormat | undefined): number | null {
-  if (!format?.height || !format.vcodec || format.vcodec === "none") return null;
-  return Math.min(format.width || format.height, format.height);
+  if (!format?.vcodec || format.vcodec === "none") return null;
+  return resolutionTier(format.height, format.width);
+}
+
+export function hasAudio(format: VideoFormat | undefined): boolean {
+  return Boolean(format?.acodec && format.acodec !== "none");
+}
+
+export function videoFormatsForMode(formats: VideoFormat[], mode: string): VideoFormat[] {
+  return mode === "video" ? formats.filter((format) => !hasAudio(format)) : formats;
 }
 
 export function tierLabel(tier: number): string {

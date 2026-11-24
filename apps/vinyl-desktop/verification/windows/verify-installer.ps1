@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory = $true)][string]$Setup,
   [Parameter(Mandatory = $true)][string]$Output,
-  [switch]$UseRunnerWebView2Policy
+  [switch]$UseRunnerWebView2Policy,
+  [ValidateSet(0, 60)][int]$NativeSoakMinutes = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,7 +17,7 @@ $uninstaller = Join-Path $install 'uninstall.exe'
 $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 $desktop = [Environment]::GetFolderPath('Desktop')
 $work = Join-Path ([IO.Path]::GetTempPath()) ('nexus-vinyl-' + [guid]::NewGuid().ToString('N'))
-$saved = Join-Path $work 'Saved media'
+$saved = Join-Path $work 'Saved media 100% %TEMP% 音楽'
 $ytdlp = Join-Path $work 'yt-dlp.exe'
 
 function Get-PeMachine([string]$path) {
@@ -36,6 +37,8 @@ function Invoke-NativeSaveTest([string]$App) {
   $exeName = [IO.Path]::GetFileName($App)
   $wrotePolicy = $false
   $madeKey = $false
+  $previousSoakMinutes = $env:VINYL_NATIVE_SOAK_MINUTES
+  $env:VINYL_NATIVE_SOAK_MINUTES = $NativeSoakMinutes.ToString()
   $argsForSmoke = @((Join-Path $PSScriptRoot 'native-download.mjs'), $App, $saved, $ytdlp)
   try {
     if ($UseRunnerWebView2Policy) {
@@ -67,6 +70,7 @@ function Invoke-NativeSaveTest([string]$App) {
       throw "Native Windows smoke failed: $detail"
     }
   } finally {
+    $env:VINYL_NATIVE_SOAK_MINUTES = $previousSoakMinutes
     if ($wrotePolicy) { Remove-ItemProperty -LiteralPath $policyPath -Name $exeName }
     if ($madeKey -and (Get-Item -LiteralPath $policyPath).ValueCount -eq 0) { Remove-Item -LiteralPath $policyPath }
   }
@@ -117,15 +121,19 @@ try {
     throw 'Smoke-test yt-dlp does not match the pinned release hash'
   }
   Invoke-NativeSaveTest -App $shortcut.TargetPath
-  $savedFile = (Get-ChildItem -File -LiteralPath $saved).FullName
-  $beforeUninstall = (Get-FileHash -LiteralPath $savedFile).Hash
+  $beforeUninstall = @(Get-ChildItem -File -LiteralPath $saved -Filter '*.mp4' | Get-FileHash -Algorithm SHA256)
+  if ($beforeUninstall.Count -ne 2) { throw 'Expected two verified saves before uninstall' }
 
   $removed = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
   if ($removed.ExitCode -ne 0 -or (Test-Path $binary) -or (Test-Path $regKey) -or (Test-Path $links[0].FullName)) {
     throw 'Uninstall did not remove the app and its registration'
   }
-  if ((Get-FileHash -LiteralPath $savedFile).Hash -ne $beforeUninstall) { throw 'Uninstall changed the saved media' }
-  Write-Host 'Uninstall removed NexusDownloader without touching the saved MP4.'
+  foreach ($file in $beforeUninstall) {
+    if ((Get-FileHash -LiteralPath $file.Path -Algorithm SHA256).Hash -ne $file.Hash) {
+      throw 'Uninstall changed saved media'
+    }
+  }
+  Write-Host 'Uninstall removed NexusDownloader without touching the two saved MP4s.'
 
   New-Item -ItemType Directory -Force -Path $Output | Out-Null
   $name = "NexusDownloader-$version-Windows-x64-Setup.exe"

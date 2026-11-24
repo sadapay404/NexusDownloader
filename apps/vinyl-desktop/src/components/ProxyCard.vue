@@ -87,6 +87,7 @@ const handleApply = () => {
           <span class="info-label">{{ $t("settings.proxyScheme") }}</span>
           <n-select
             v-model:value="scheme"
+            :aria-label="$t('settings.proxyScheme')"
             :options="schemeOptions"
             size="small"
             style="width: 120px"
@@ -96,6 +97,7 @@ const handleApply = () => {
           <span class="info-label">{{ $t("settings.proxyHost") }}</span>
           <n-input
             v-model:value="host"
+            :input-props="{ 'aria-label': $t('settings.proxyHost') }"
             :placeholder="$t('settings.proxyHostPlaceholder')"
             size="small"
             clearable
@@ -106,6 +108,8 @@ const handleApply = () => {
           <span class="info-label">{{ $t("settings.proxyPort") }}</span>
           <n-input-number
             v-model:value="port"
+            :input-props="{ 'aria-label': $t('settings.proxyPort') }"
+            :show-button="false"
             :min="1"
             :max="65535"
             :placeholder="$t('settings.proxyPortPlaceholder')"
@@ -118,6 +122,7 @@ const handleApply = () => {
           <span class="info-label">{{ $t("settings.proxyUsername") }}</span>
           <n-input
             v-model:value="username"
+            :input-props="{ 'aria-label': $t('settings.proxyUsername') }"
             :placeholder="$t('settings.proxyUsernamePlaceholder')"
             size="small"
             clearable
@@ -128,6 +133,7 @@ const handleApply = () => {
           <span class="info-label">{{ $t("settings.proxyPassword") }}</span>
           <n-input
             v-model:value="password"
+            :input-props="{ 'aria-label': $t('settings.proxyPassword') }"
             type="password"
             show-password-on="click"
             :placeholder="$t('settings.proxyPasswordPlaceholder')"
@@ -140,7 +146,7 @@ const handleApply = () => {
       <n-flex justify="end" :size="8">
         <n-button size="small" :loading="testing" :disabled="!host.trim()" @click="handleTest">
           <template #icon>
-            <n-icon>
+            <n-icon aria-hidden="true">
               <icon-mdi-sync />
             </n-icon>
           </template>
@@ -148,7 +154,7 @@ const handleApply = () => {
         </n-button>
         <n-button size="small" type="primary" @click="handleApply">
           <template #icon>
-            <n-icon>
+            <n-icon aria-hidden="true">
               <icon-mdi-check />
             </n-icon>
           </template>

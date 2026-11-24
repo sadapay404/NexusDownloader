@@ -33,8 +33,8 @@ pub struct DownloadTaskRecord {
 /// 仅在应用启动时恢复被上次退出中断的任务，读取列表不应修改正在运行的任务。
 pub fn recover_interrupted_tasks(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "UPDATE tasks SET status = 'error', error = '应用已重启，任务已中断', speed = '', eta = '' \
-         WHERE status IN ('preparing', 'queued', 'downloading', 'postprocessing', 'paused')",
+        "UPDATE tasks SET status = 'error', error = 'err_download_interrupted', speed = '', eta = '' \
+         WHERE status IN ('preparing', 'downloading', 'postprocessing', 'paused')",
         [],
     )?;
     Ok(())
@@ -44,7 +44,7 @@ pub fn get_all_tasks(conn: &Connection) -> Result<Vec<DownloadTaskRecord>, rusql
     let mut stmt = conn.prepare(
         "SELECT id, url, title, thumbnail, format_label, status, percent, speed, eta, \
          downloaded, total, file_size_bytes, logs, error, output_file, created_at, params_json \
-         FROM tasks ORDER BY created_at DESC",
+         FROM tasks ORDER BY created_at DESC, rowid DESC",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -154,54 +154,74 @@ pub fn upsert_task_internal(
     Ok(())
 }
 
-/// 后端生命周期调用：标记任务为下载中
-pub fn mark_task_downloading(state: &DatabaseState, id: &str) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE tasks SET status = 'downloading', error = NULL WHERE id = ?1",
-        params![id],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+/// Claim a durable queued row and return the enqueue identity for this attempt.
+pub fn mark_task_downloading(state: &DatabaseState, id: &str) -> Result<i64, String> {
+    let mut conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let attempt = tx
+        .query_row(
+            "UPDATE tasks SET status = 'downloading', error = NULL \
+         WHERE id = ?1 AND status = 'queued' RETURNING created_at",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => "err_task_not_queued".into(),
+            other => other.to_string(),
+        })?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(attempt)
 }
 
-/// 后端生命周期调用：标记任务已完成并更新产物信息
+fn write_terminal(
+    state: &DatabaseState,
+    sql: &str,
+    parameters: impl rusqlite::Params,
+) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    match conn.execute(sql, parameters).map_err(|e| e.to_string())? {
+        1 => Ok(()),
+        _ => Err("err_task_not_found".into()),
+    }
+}
+
 pub fn mark_task_completed(
     state: &DatabaseState,
     id: &str,
+    attempt: i64,
     output_file: &str,
-    file_size_bytes: Option<i64>,
+    file_size_bytes: i64,
 ) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
+    write_terminal(
+        state,
         "UPDATE tasks SET status = 'completed', percent = 100, speed = '', eta = '', \
-         output_file = ?2, file_size_bytes = ?3, error = NULL WHERE id = ?1",
-        params![id, output_file, file_size_bytes],
+         output_file = ?3, file_size_bytes = ?4, error = NULL \
+         WHERE id = ?1 AND created_at = ?2 AND status = 'downloading'",
+        params![id, attempt, output_file, file_size_bytes],
     )
-    .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
-/// 后端生命周期调用：标记任务失败并记录错误信息
-pub fn mark_task_error(state: &DatabaseState, id: &str, error_msg: &str) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE tasks SET status = 'error', speed = '', eta = '', error = ?2 WHERE id = ?1",
-        params![id, error_msg],
+pub fn mark_task_error(
+    state: &DatabaseState,
+    id: &str,
+    attempt: i64,
+    error_msg: &str,
+) -> Result<(), String> {
+    write_terminal(
+        state,
+        "UPDATE tasks SET status = 'error', speed = '', eta = '', error = ?3 \
+         WHERE id = ?1 AND created_at = ?2 AND status = 'downloading'",
+        params![id, attempt, error_msg],
     )
-    .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
-/// 后端生命周期调用：标记任务已被用户取消
-pub fn mark_task_cancelled(state: &DatabaseState, id: &str) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE tasks SET status = 'cancelled', speed = '', eta = '' WHERE id = ?1",
-        params![id],
+pub fn mark_task_cancelled(state: &DatabaseState, id: &str, attempt: i64) -> Result<(), String> {
+    write_terminal(
+        state,
+        "UPDATE tasks SET status = 'cancelled', speed = '', eta = '' \
+         WHERE id = ?1 AND created_at = ?2 AND status = 'downloading'",
+        params![id, attempt],
     )
-    .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 // 暴露给前端调用的 Tauri 命令
@@ -308,6 +328,29 @@ mod tests {
     }
 
     #[test]
+    fn only_a_durable_queued_row_can_claim_a_download_slot() {
+        let state = DatabaseState {
+            conn: std::sync::Mutex::new(database_with_tasks()),
+            db_path: ":memory:".into(),
+        };
+        assert!(mark_task_downloading(&state, "missing").is_err());
+        assert!(mark_task_downloading(&state, "cancelled").is_err());
+        let attempt = mark_task_downloading(&state, "queued").unwrap();
+        assert!(mark_task_downloading(&state, "queued").is_err());
+        assert!(mark_task_cancelled(&state, "queued", attempt - 1).is_err());
+        mark_task_completed(&state, "queued", attempt, "/test/result.mp4", 32).unwrap();
+        assert!(mark_task_error(&state, "queued", attempt, "late event").is_err());
+        let conn = state.conn.lock().unwrap();
+        let row = get_all_tasks(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|task| task.id == "queued")
+            .unwrap();
+        assert_eq!(row.status, "completed");
+        assert_eq!(row.file_size_bytes, Some(32));
+    }
+
+    #[test]
     fn reading_task_list_never_interrupts_active_downloads() {
         let conn = database_with_tasks();
         for _ in 0..2 {
@@ -321,18 +364,21 @@ mod tests {
     }
 
     #[test]
-    fn startup_recovery_only_interrupts_unfinished_tasks() {
+    fn startup_recovery_preserves_waiting_tasks_and_only_interrupts_started_work() {
         let conn = database_with_tasks();
         recover_interrupted_tasks(&conn).unwrap();
         // Running recovery again is harmless, including for existing error details.
         recover_interrupted_tasks(&conn).unwrap();
         for task in get_all_tasks(&conn).unwrap() {
-            if matches!(task.id.as_str(), "completed" | "error" | "cancelled") {
+            if matches!(
+                task.id.as_str(),
+                "completed" | "error" | "cancelled" | "queued"
+            ) {
                 assert_eq!(task.status, task.id);
                 assert_eq!(task.error.as_deref(), Some("original error"));
             } else {
                 assert_eq!(task.status, "error");
-                assert_eq!(task.error.as_deref(), Some("应用已重启，任务已中断"));
+                assert_eq!(task.error.as_deref(), Some("err_download_interrupted"));
                 assert!(task.speed.is_empty());
                 assert!(task.eta.is_empty());
             }

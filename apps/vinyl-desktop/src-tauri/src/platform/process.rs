@@ -40,11 +40,18 @@ impl ProcessRegistry {
 #[cfg(target_os = "windows")]
 pub fn kill_process(pid: u32) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("taskkill")
+    let output = std::process::Command::new("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|error| format!("err_kill_process:{}", error))?;
+    if !output.status.success() {
+        return Err(format!(
+            "err_kill_process:{} {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
     Ok(())
 }
 

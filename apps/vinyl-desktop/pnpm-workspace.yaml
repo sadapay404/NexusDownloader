@@ -1,3 +1,28 @@
 allowBuilds:
   '@parcel/watcher': true
   esbuild: true
+patchedDependencies:
+  naive-ui@2.45.3: patches/naive-ui@2.45.3.patch
+
+# Known patched releases within the existing transitive dependency majors.
+overrides:
+  'brace-expansion@^2.0.1': '2.1.7'
+  'brace-expansion@^5.0.2': '5.0.12'
+  'postcss@^8.5.0': '8.5.23'
+  'nanoid@^3.3.0': '3.3.18'
+  'postcss-selector-parser@^7.1.0': '7.1.6'
+  'immutable@^5.0.0': '5.1.8'
+  'source-map-js@^1.2.0': '1.2.2'
+
+minimumReleaseAgeExclude:
+  - '@typescript-eslint/eslint-plugin@8.74.0'
+  - '@typescript-eslint/parser@8.74.0'
+  - '@typescript-eslint/project-service@8.74.0'
+  - '@typescript-eslint/scope-manager@8.74.0'
+  - '@typescript-eslint/tsconfig-utils@8.74.0'
+  - '@typescript-eslint/type-utils@8.74.0'
+  - '@typescript-eslint/types@8.74.0'
+  - '@typescript-eslint/typescript-estree@8.74.0'
+  - '@typescript-eslint/utils@8.74.0'
+  - '@typescript-eslint/visitor-keys@8.74.0'
+  - typescript-eslint@8.74.0

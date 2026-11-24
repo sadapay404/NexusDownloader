@@ -106,9 +106,9 @@ for (const [name, next] of [
 test("shorts copied on return select the real portrait 1080p rendition", async ({ page }) => {
   await installIpcFixture(page, { portrait: true });
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "NexusDownloader" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "NexusDownloader", exact: true })).toBeVisible();
   await expect(
-    page.getByText("Proudly Created by Sheikh Arsalan in Colaboration with Mubashir"),
+    page.getByText("Proudly Created by Sheikh Arsalan in Collaboration with Mubashir"),
   ).toBeVisible();
   await page.evaluate((next) => {
     window.vinylFixture.clipboard = next;
@@ -180,7 +180,7 @@ test("leaving the pending tab clears autoplay and does not submit from another p
   await inspect(page);
   await quality(page, "Continue").click();
   await expect(countdown(page)).toBeVisible();
-  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("navigation").getByRole("button", { name: "Home", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Video link" })).toBeVisible();
   await waitToExpire(page);
   expect(await requests(page, "start_download")).toEqual([]);

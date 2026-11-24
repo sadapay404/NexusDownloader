@@ -3,11 +3,15 @@
 use crate::utils;
 use tauri::AppHandle;
 
+use super::install::{install_executables, make_executable, stage_in, staged_path};
+use super::release_asset::resolve_release_assets;
 use super::support::{
-    build_tool_status, download_to_file_with_progress, emit_tool_progress, executable_temp_path,
-    replace_executable, verify_executable,
+    build_tool_status, download_to_file_with_progress, emit_tool_progress, verify_executable,
+    verify_release_version,
 };
 use super::ToolStatus;
+
+static INSTALLING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tauri::command]
 pub async fn get_ffmpeg_status(app: AppHandle) -> Result<ToolStatus, String> {
@@ -24,16 +28,15 @@ pub async fn get_ffmpeg_status(app: AppHandle) -> Result<ToolStatus, String> {
     Ok(status)
 }
 
-/// 下载或验证中途失败时清掉两份临时文件，避免半成品留在应用数据目录。
-async fn cleanup_temps(temps: &[std::path::PathBuf]) {
-    for pending in temps {
-        let _ = tokio::fs::remove_file(pending).await;
-    }
-}
-
 async fn download_ffmpeg_impl(app: AppHandle, operation: &str) -> Result<(), String> {
+    let _install = INSTALLING
+        .try_lock()
+        .map_err(|_| "err_tool_operation_busy")?;
     let dir = utils::get_managed_ffmpeg_dir(&app)?;
-    let urls = utils::get_ffmpeg_download_urls();
+    let [ffmpeg_asset, ffprobe_asset] = utils::ffmpeg_release_assets();
+    let (tag, assets) =
+        resolve_release_assets("eugeneware/ffmpeg-static", &[&ffmpeg_asset, &ffprobe_asset])
+            .await?;
     let ffmpeg_name = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
     } else {
@@ -45,45 +48,25 @@ async fn download_ffmpeg_impl(app: AppHandle, operation: &str) -> Result<(), Str
         "ffprobe"
     };
     let targets = [dir.join(ffmpeg_name), dir.join(ffprobe_name)];
-    let temps = [
-        executable_temp_path(&targets[0], "download")?,
-        executable_temp_path(&targets[1], "download")?,
-    ];
-
-    // 两个文件各占总进度的一半
-    for (index, ((_, url), temp)) in urls.iter().zip(temps.iter()).enumerate() {
-        if let Err(e) = download_to_file_with_progress(
+    let stage = stage_in(&dir)?;
+    for (index, (asset, target)) in assets.iter().zip(targets.iter()).enumerate() {
+        let temp = staged_path(&stage, target)?;
+        download_to_file_with_progress(
             &app,
             "ffmpeg",
             operation,
-            url,
-            temp,
+            asset,
+            &temp,
             index as f64 * 50.0,
             50.0,
         )
-        .await
-        {
-            cleanup_temps(&temps).await;
-            return Err(e);
-        }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(temp, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("err_set_permissions:{}", e))?;
-        }
-
-        if let Err(detail) = verify_executable(temp, "-version").await {
-            cleanup_temps(&temps).await;
-            return Err(format!("err_validate_ffmpeg:{}", detail));
-        }
+        .await?;
+        make_executable(&temp)?;
+        let expected_tool = if index == 0 { "ffmpeg" } else { "ffprobe" };
+        verify_release_version(&temp, "-version", expected_tool, &tag).await?;
     }
-
     emit_tool_progress(&app, "ffmpeg", operation, "installing", None);
-    for (temp, target) in temps.iter().zip(targets.iter()) {
-        replace_executable(temp, target)?;
-    }
+    install_executables(stage, &[&targets[0], &targets[1]])?;
     emit_tool_progress(&app, "ffmpeg", operation, "complete", Some(100.0));
     Ok(())
 }

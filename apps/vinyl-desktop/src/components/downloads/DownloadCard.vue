@@ -3,6 +3,7 @@ import { NFlex, NCheckbox, type LogInst } from "naive-ui";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useVideoStore } from "@/stores/video";
 import { useDownloadStore } from "@/stores/download";
 import { useI18n } from "vue-i18n";
 import { formatError } from "@/utils/format";
@@ -27,6 +28,11 @@ watch(thumbnailSrc, () => {
 const isLogExpanded = ref(false);
 const showTaskEditor = ref(false);
 const logRef = ref<LogInst | null>(null);
+
+const router = useRouter();
+const isPreparation = computed(() => props.task.params.downloadMode === "preparation");
+const outputUnavailable = computed(() => downloadStore.unavailableOutputs.has(props.task.id));
+const cancelling = computed(() => downloadStore.cancellingIds.has(props.task.id));
 
 const isCompleted = computed(() => props.task.status === "completed");
 const savedName = computed(() => props.task.outputFile?.split(/[\\/]/).pop());
@@ -60,6 +66,7 @@ const progressStatus = computed<ProgressStatus>(() => {
 });
 
 const statusLabel = computed<string>(() => {
+  if (cancelling.value) return t("downloads.stopping");
   switch (props.task.status) {
     case "preparing":
       return t("downloads.status.preparing");
@@ -155,19 +162,9 @@ const handleOpenFolder = async () => {
       const [exists] = await invoke<boolean[]>("check_files_exist", {
         paths: [props.task.outputFile],
       });
-      if (exists) {
-        await revealItemInDir(props.task.outputFile);
-        return;
-      }
-      window.$dialog.warning({
-        title: t("downloads.fileNotExist"),
-        content: t("downloads.fileDeletedOrMoved"),
-        positiveText: t("common.remove"),
-        negativeText: t("common.cancel"),
-        onPositiveClick: () => {
-          downloadStore.removeTask(props.task.id);
-        },
-      });
+      downloadStore.markOutputAvailable(props.task.id, exists === true);
+      if (exists) await revealItemInDir(props.task.outputFile);
+      else window.$message.warning(t("downloads.savedFileUnavailableDetail"));
       return;
     }
     await revealItemInDir(props.task.params.downloadDir);
@@ -190,7 +187,7 @@ const handleCancel = () => {
         await downloadStore.cancelTask(props.task.id);
       } catch (error: unknown) {
         window.$message.error(
-          error instanceof Error ? error.message : String(error) || t("downloads.cancelFailed"),
+          `${t("downloads.cancelFailed")}: ${formatError(error instanceof Error ? error.message : String(error))}`,
         );
       }
     },
@@ -225,7 +222,7 @@ const handleRetry = () => {
     negativeText: t("common.cancel"),
     onPositiveClick: async () => {
       try {
-        await downloadStore.retryTask(props.task.id);
+        if (!(await downloadStore.retryTask(props.task.id))) window.$message.error(t("downloads.retryFailed"));
       } catch (error: unknown) {
         window.$message.error(
           error instanceof Error ? error.message : String(error) || t("downloads.retryFailed"),
@@ -234,6 +231,13 @@ const handleRetry = () => {
     },
   });
 };
+
+function inspectAgain() {
+  const videoStore = useVideoStore();
+  videoStore.draftUrl = props.task.url;
+  videoStore.needsLinkRetry = true;
+  void router.push({ name: "home" });
+}
 
 const deleteFileChecked = ref(false);
 
@@ -294,7 +298,11 @@ const handleRemove = () => {
           // 忽略清理失败
         }
       }
-      downloadStore.removeTask(props.task.id);
+      try {
+        await downloadStore.removeTask(props.task.id);
+      } catch (error) {
+        window.$message.error(formatError(error instanceof Error ? error.message : String(error)));
+      }
     },
   });
 };
@@ -346,7 +354,7 @@ const handleRemove = () => {
               <template #trigger>
                 <n-tag size="small" :bordered="false" round type="error">
                   <template #icon>
-                    <n-icon size="12"><icon-mdi-information-outline /></n-icon>
+                    <n-icon aria-hidden="true" size="12"><icon-mdi-information-outline /></n-icon>
                   </template>
                   {{ statusLabel }}
                 </n-tag>
@@ -392,9 +400,9 @@ const handleRemove = () => {
             <!-- 打开源网页链接 -->
             <n-tooltip trigger="hover">
               <template #trigger>
-                <n-button size="tiny" strong secondary @click="handleOpenSource">
+                <n-button size="tiny" strong secondary :aria-label="$t('downloads.openSource')" @click="handleOpenSource">
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-open-in-new /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-open-in-new /></n-icon>
                   </template>
                 </n-button>
               </template>
@@ -407,10 +415,12 @@ const handleRemove = () => {
               size="tiny"
               strong
               secondary
+              :aria-expanded="isLogExpanded"
+              :aria-label="$t('downloads.toggleLog')"
               @click="toggleLog"
             >
               <template #icon>
-                <n-icon size="16">
+                <n-icon aria-hidden="true" size="16">
                   <icon-mdi-chevron-up v-if="isLogExpanded" />
                   <icon-mdi-text-long v-else />
                 </n-icon>
@@ -420,9 +430,9 @@ const handleRemove = () => {
             <!-- 重新下载按钮：已完成状态 -->
             <n-tooltip v-if="isCompleted" trigger="hover">
               <template #trigger>
-                <n-button size="tiny" strong secondary type="primary" @click="handleReDownload">
+                <n-button size="tiny" strong secondary type="primary" :aria-label="$t('downloads.reDownload')" @click="handleReDownload">
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-refresh /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-refresh /></n-icon>
                   </template>
                 </n-button>
               </template>
@@ -431,22 +441,26 @@ const handleRemove = () => {
 
             <!-- 重试下载按钮 -->
             <n-tooltip
-              v-if="task.status === 'error' || task.status === 'cancelled'"
+              v-if="!isPreparation && (task.status === 'error' || task.status === 'cancelled')"
               trigger="hover"
             >
               <template #trigger>
-                <n-button size="tiny" strong secondary type="primary" @click="handleRetry">
+                <n-button size="tiny" strong secondary type="primary" :aria-label="$t('downloads.reDownload')" @click="handleRetry">
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-refresh /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-refresh /></n-icon>
                   </template>
                 </n-button>
               </template>
               {{ $t("downloads.reDownload") }}
             </n-tooltip>
 
+            <n-button v-if="isPreparation && task.status === 'error'" size="tiny" secondary @click="inspectAgain">
+              {{ $t("downloads.inspectAgain") }}
+            </n-button>
+
             <!-- 编辑失败或取消任务的本次下载参数 -->
             <n-tooltip
-              v-if="task.status === 'error' || task.status === 'cancelled'"
+              v-if="!isPreparation && (task.status === 'error' || task.status === 'cancelled')"
               trigger="hover"
             >
               <template #trigger>
@@ -458,7 +472,7 @@ const handleRemove = () => {
                   @click="showTaskEditor = true"
                 >
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-pencil /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-pencil /></n-icon>
                   </template>
                 </n-button>
               </template>
@@ -468,9 +482,9 @@ const handleRemove = () => {
             <!-- 定位打开所在文件夹（仅已完成） -->
             <n-tooltip v-if="isCompleted" trigger="hover">
               <template #trigger>
-                <n-button size="tiny" strong secondary @click="handleOpenFolder">
+                <n-button size="tiny" strong secondary  :aria-label="$t('common.openFolder')" @click="handleOpenFolder">
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-folder-open-outline /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-folder-open-outline /></n-icon>
                   </template>
                 </n-button>
               </template>
@@ -482,9 +496,9 @@ const handleRemove = () => {
             <!-- 取消任务按钮 -->
             <n-tooltip v-if="isActive" trigger="hover">
               <template #trigger>
-                <n-button size="tiny" strong secondary type="error" @click="handleCancel">
+                <n-button size="tiny" strong secondary type="error" :disabled="cancelling" :aria-label="$t('downloads.cancelDownload')" @click="handleCancel">
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-close-circle-outline /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-close-circle-outline /></n-icon>
                   </template>
                 </n-button>
               </template>
@@ -494,9 +508,9 @@ const handleRemove = () => {
             <!-- 移除记录按钮 -->
             <n-tooltip v-else trigger="hover">
               <template #trigger>
-                <n-button type="error" size="tiny" strong secondary @click="handleRemove">
+                <n-button type="error" size="tiny" strong secondary :aria-label="$t('downloads.removeTask')" @click="handleRemove">
                   <template #icon>
-                    <n-icon size="16"><icon-mdi-delete-outline /></n-icon>
+                    <n-icon aria-hidden="true" size="16"><icon-mdi-delete-outline /></n-icon>
                   </template>
                 </n-button>
               </template>
@@ -507,7 +521,7 @@ const handleRemove = () => {
 
         <div v-if="isCompleted && savedName" class="saved-track">
           <icon-mdi-check-circle-outline aria-hidden="true" />
-          <span>{{ $t("vinyl.savedFile") }}</span>
+          <span>{{ $t(outputUnavailable ? "downloads.savedFileUnavailable" : "vinyl.savedFile") }}</span>
           <button
             type="button"
             :title="task.outputFile"

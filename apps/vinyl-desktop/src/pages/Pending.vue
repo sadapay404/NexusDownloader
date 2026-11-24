@@ -7,6 +7,8 @@ import {
   consumeVinylSelection,
   formatForTier,
   nativeTier,
+  hasAudio,
+  videoFormatsForMode,
 } from "@/utils/vinylSelection";
 import { useVinylCountdown } from "@/composables/useVinylCountdown";
 import { formatFileSize } from "@/utils/format";
@@ -106,6 +108,10 @@ const checking = ref(false);
 const submitting = ref(false);
 let revision = 0;
 
+const modeVideoFormats = computed(() => {
+  const item = activeItem.value;
+  return item ? videoFormatsForMode(item.videoFormats, item.downloadMode) : [];
+});
 const showPresets = computed(() => {
   const item = activeItem.value;
   return (
@@ -115,7 +121,7 @@ const showPresets = computed(() => {
     !["is_live", "is_upcoming"].includes(item.videoInfo.live_status || "") &&
     item.downloadMode !== "audio" &&
     !item.extractAudio &&
-    item.videoFormats.length > 0
+    modeVideoFormats.value.length > 0
   );
 });
 const currentFormat = computed(() =>
@@ -127,14 +133,12 @@ const selectedTier = computed(() => nativeTier(currentFormat.value));
 const offeredTiers = computed(
   () =>
     new Set(
-      activeItem.value?.videoFormats
+      modeVideoFormats.value
         .map(nativeTier)
         .filter((tier): tier is number => tier !== null),
     ),
 );
-const containsAudio = computed(() =>
-  Boolean(currentFormat.value?.acodec && currentFormat.value.acodec !== "none"),
-);
+const containsAudio = computed(() => hasAudio(currentFormat.value));
 const mayContinue = computed(() => {
   const item = activeItem.value;
   return (
@@ -183,12 +187,15 @@ watch(
     const item = activeItem.value;
     if (!id || !consumeVinylSelection(id) || !item || !showPresets.value) return;
     const defaultFormat = formatForTier(
-      item.videoFormats,
+      modeVideoFormats.value,
       1080,
       item.selectedVideoFormat,
       settingStore.preferredVideoCodec,
     );
     if (defaultFormat) {
+      if (defaultFormat.format_id !== item.selectedVideoFormat && hasAudio(defaultFormat)) {
+        item.selectedAudioFormat = "";
+      }
       item.selectedVideoFormat = defaultFormat.format_id;
       manual.value = false;
     }
@@ -239,12 +246,15 @@ function chooseTier(tier: number) {
   const item = activeItem.value;
   if (!item || submitting.value) return;
   const format = formatForTier(
-    item.videoFormats,
+    modeVideoFormats.value,
     tier,
     item.selectedVideoFormat,
     settingStore.preferredVideoCodec,
   );
-  if (format) item.selectedVideoFormat = format.format_id;
+  if (format && item.selectedVideoFormat !== format.format_id) {
+    item.selectedVideoFormat = format.format_id;
+    if (hasAudio(format)) item.selectedAudioFormat = "";
+  }
 }
 
 function toggleMore() {
@@ -368,6 +378,7 @@ async function handleDownload() {
 
 <template>
   <div class="pending-page">
+    <h1 class="sr-only">{{ $t("nav.pending") }}</h1>
     <template v-if="pendingStore.items.length > 0">
       <n-tabs
         v-model:value="pendingStore.activeId"
@@ -380,9 +391,12 @@ async function handleDownload() {
         @add="handleTabAdd"
       >
         <template #prefix>
-          <n-button size="small" strong secondary circle @click="handleBackToHome">
+          <n-button
+            size="small" strong secondary circle
+            :aria-label="$t('nav.home')" @click="handleBackToHome"
+          >
             <template #icon>
-              <n-icon><icon-mdi-arrow-left /></n-icon>
+              <n-icon aria-hidden="true"><icon-mdi-arrow-left /></n-icon>
             </template>
           </n-button>
         </template>
@@ -405,6 +419,7 @@ async function handleDownload() {
           <n-input
             :value="activeItem.url"
             :placeholder="$t('detail.videoLink')"
+            :input-props="{ 'aria-label': $t('detail.videoLink') }"
             size="small"
             round
             readonly
@@ -416,10 +431,11 @@ async function handleDownload() {
             secondary
             round
             :loading="videoStore.fetching"
+            :aria-label="$t('pending.refreshFormats')"
             @click="handleRefresh"
           >
             <template #icon>
-              <n-icon><icon-mdi-refresh /></n-icon>
+              <n-icon aria-hidden="true"><icon-mdi-refresh /></n-icon>
             </template>
           </n-button>
         </n-flex>
@@ -462,7 +478,7 @@ async function handleDownload() {
         >
           <template #header>
             <n-flex align="center" :size="8">
-              <n-icon size="16"><icon-mdi-playlist-play /></n-icon>
+              <n-icon aria-hidden="true" size="16"><icon-mdi-playlist-play /></n-icon>
               <span>{{ $t("detail.playlist") }}</span>
               <n-tag size="small" round :bordered="false" type="info">
                 {{ activeItem.selectedPlaylistItems.length }} /
@@ -505,8 +521,10 @@ async function handleDownload() {
             v-model:download-mode="activeItem.downloadMode"
             v-model:selected-video-format="activeItem.selectedVideoFormat"
             v-model:selected-audio-format="activeItem.selectedAudioFormat"
+            :is-playlist="activeItem.isPlaylist"
             :video-formats="activeItem.videoFormats"
             :extract-audio="activeItem.extractAudio"
+            :no-merge="activeItem.noMerge"
             :audio-formats="activeItem.audioFormats"
             :video-info="activeItem.videoInfo as VideoInfo"
             class="section-card"
@@ -557,7 +575,7 @@ async function handleDownload() {
       <template #extra>
         <n-button type="primary" round @click="handleBackToHome">
           <template #icon>
-            <n-icon><icon-mdi-magnify /></n-icon>
+            <n-icon aria-hidden="true"><icon-mdi-magnify /></n-icon>
           </template>
           {{ $t("pending.goParse") }}
         </n-button>

@@ -8,8 +8,7 @@ use super::model::DownloadParams;
 pub(super) fn requires_ffmpeg(params: &DownloadParams) -> bool {
     (params.download_mode == "default"
         && !params.no_merge
-        && (params.playlist_items.is_some()
-            || !params.video_has_audio
+        && (!params.video_has_audio
             || params
                 .audio_format
                 .as_deref()
@@ -18,10 +17,9 @@ pub(super) fn requires_ffmpeg(params: &DownloadParams) -> bool {
             .video_format
             .as_deref()
             .is_some_and(|format| !format.is_empty())
-            || params
-                .audio_format
-                .as_deref()
-                .is_some_and(|format| format.contains('+'))))
+            || params.audio_format.as_deref().is_some_and(|format| {
+                format.contains('+') || (params.prefer_video && !format.is_empty())
+            })))
         || requires_audio_extraction(params)
         || params.embed_subs
         || params.embed_thumbnail
@@ -49,155 +47,83 @@ fn requires_audio_extraction(params: &DownloadParams) -> bool {
                 .is_none_or(|format| format.is_empty()))
 }
 
-/// 根据下载模式与格式选择，构建 `-f` 格式参数。
-/// `no_merge` 为 true 时用逗号分别下载各格式，不丢弃已选音轨。
-fn build_format_args(params: &DownloadParams) -> Vec<String> {
-    let mut args = build_format_selector_args(params);
-    let selected_video = params
-        .video_format
-        .as_deref()
-        .is_some_and(|format| !format.is_empty());
-    let selected_audio = params
-        .audio_format
-        .as_deref()
-        .is_some_and(|format| !format.is_empty());
-    let has_explicit_format = match params.download_mode.as_str() {
-        _ if params.extract_audio => selected_audio,
-        "audio" => selected_audio,
-        "video" => selected_video,
-        _ => selected_video || selected_audio,
-    };
-    // Format IDs belong to individual videos. A different entry in the same post
-    // or playlist may not provide the first entry's chosen format IDs.
-    if !params.no_playlist
-        && params.playlist_items.is_some()
-        && has_explicit_format
-        && args.len() == 2
+/// Match a literal extractor ID, never the selector keywords, extension aliases,
+/// or fallback expressions that yt-dlp also accepts in `-f`.
+fn exact_format(id: &str, selector: &str) -> Result<String, String> {
+    if id.is_empty()
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(&byte))
     {
-        let fallback = match params.download_mode.as_str() {
-            _ if params.extract_audio => "bestaudio/best",
-            "audio" => "bestaudio",
-            "video" => "bestvideo/best",
-            _ if params.video_format.as_deref().is_none_or(str::is_empty) => "bestaudio/best",
-            _ if params.no_merge => "bestvideo/best",
-            _ => "bestvideo*+bestaudio/best",
-        };
-        if params.download_mode == "default" && params.no_merge && args[1].contains(',') {
-            args[1] = args[1]
-                .split(',')
-                .enumerate()
-                .map(|(index, format)| {
-                    let fallback = if index == 0
-                        && params
-                            .video_format
-                            .as_deref()
-                            .is_some_and(|format| !format.is_empty())
-                    {
-                        "bestvideo/best"
-                    } else {
-                        "bestaudio/best"
-                    };
-                    format!("{format}/{fallback}")
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-        } else {
-            args[1] = format!("{}/{}", args[1], fallback);
-        }
+        return Err("err_invalid_format_id".into());
     }
-    if params.download_mode == "default"
-        && !params.no_merge
-        && !params.extract_audio
-        && params.audio_format.as_deref().is_some_and(|value| {
-            !value.is_empty() && (value.contains('+') || params.video_has_audio)
-        })
-    {
-        args.push("--audio-multistreams".to_string());
-    }
-    args
+    Ok(format!("{selector}[format_id='{id}']"))
 }
 
-fn build_format_selector_args(params: &DownloadParams) -> Vec<String> {
-    // Audio extraction should fetch the chosen audio directly when available.
-    // Downloading and merging video first wastes bandwidth and can make FFmpeg
-    // extract the video's embedded soundtrack instead of the selected language.
-    if params.extract_audio {
-        let audio = params
-            .audio_format
-            .as_deref()
-            .and_then(|value| value.split('+').find(|format| !format.is_empty()))
-            .unwrap_or("bestaudio/best");
-        return vec!["-f".to_string(), audio.to_string()];
+pub(super) fn build_format_args(params: &DownloadParams) -> Result<Vec<String>, String> {
+    let video = params.video_format.as_deref().filter(|id| !id.is_empty());
+    let audio = params.audio_format.as_deref().filter(|id| !id.is_empty());
+    let mut multistream = false;
+    let selector = if requires_audio_extraction(params) || params.download_mode == "audio" {
+        match audio {
+            Some(ids) => exact_format(ids.split('+').next().unwrap_or_default(), "ba")?,
+            None => "ba/b".into(), // Extraction from a combined file is intentional in audio mode.
+        }
+    } else if params.download_mode == "video" {
+        match video {
+            Some(id) => exact_format(id, "bv")?,
+            None => "bv".into(),
+        }
+    } else {
+        let video = video.map(|id| exact_format(id, "bv*")).transpose()?;
+        let audio = audio
+            .map(|ids| {
+                ids.split('+')
+                    .map(|id| exact_format(id, "ba"))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let joiner = if params.no_merge { "," } else { "+" };
+        match (video, audio.is_empty()) {
+            (Some(v), false) => {
+                // Also preserve explicitly selected audio when the video has a built-in track.
+                multistream = !params.no_merge;
+                format!("{v}{joiner}{}", audio.join(joiner))
+            }
+            (Some(v), true) if params.no_merge => v,
+            // Even if metadata has changed, only this exact video ID may be used.
+            (Some(v), true) => format!("{v}[acodec!=none]/{v}[acodec=none]+ba"),
+            (None, false) if params.prefer_video => {
+                multistream = !params.no_merge;
+                format!("bv*{joiner}{}", audio.join(joiner))
+            }
+            (None, false) => {
+                multistream = !params.no_merge && audio.len() > 1;
+                audio.join(joiner)
+            }
+            (None, true) if params.no_merge => "bv,ba".into(),
+            (None, true) => return Ok(Vec::new()), // Deliberate Automatic selection.
+        }
+    };
+    let mut args = vec!["-f".into(), selector];
+    if multistream {
+        args.push("--audio-multistreams".into());
     }
-    match params.download_mode.as_str() {
-        "video" => {
-            if let Some(ref vf) = params.video_format {
-                if !vf.is_empty() {
-                    return vec!["-f".to_string(), vf.clone()];
-                }
-            }
-            vec!["-f".to_string(), "bestvideo/best".to_string()]
-        }
-        "audio" => {
-            if let Some(ref af) = params.audio_format {
-                if !af.is_empty() {
-                    return vec![
-                        "-f".to_string(),
-                        af.split('+').next().unwrap_or(af).to_string(),
-                    ];
-                }
-            }
-            vec!["-f".to_string(), "bestaudio/best".to_string()]
-        }
-        _ => {
-            let vf = params.video_format.as_deref().filter(|s| !s.is_empty());
-            let af = params.audio_format.as_deref().filter(|s| !s.is_empty());
-            match (vf, af) {
-                (Some(v), Some(a)) => {
-                    if params.no_merge {
-                        vec!["-f".to_string(), format!("{},{}", v, a.replace('+', ","))]
-                    } else {
-                        vec!["-f".to_string(), format!("{}+{}", v, a)]
-                    }
-                }
-                (Some(v), None) => {
-                    if params.no_merge || params.video_has_audio {
-                        vec!["-f".to_string(), v.to_string()]
-                    } else {
-                        vec![
-                            "-f".to_string(),
-                            format!(
-                                "{0}[acodec!=none]/{0}+bestaudio/best[vcodec!=none][acodec!=none]",
-                                v
-                            ),
-                        ]
-                    }
-                }
-                (None, Some(a)) => {
-                    if params.no_merge {
-                        vec!["-f".to_string(), a.replace('+', ",")]
-                    } else {
-                        vec!["-f".to_string(), a.to_string()]
-                    }
-                }
-                (None, None) if params.no_merge => {
-                    vec![
-                        "-f".to_string(),
-                        "bestvideo/best[vcodec!=none],bestaudio".to_string(),
-                    ]
-                }
-                _ => Vec::new(),
-            }
-        }
-    }
+    Ok(args)
 }
 
 /// 构建 yt-dlp 下载参数
 pub(super) fn build_download_args(
     app: &AppHandle,
     params: &DownloadParams,
+    output_token: &str,
 ) -> Result<Vec<String>, String> {
     validate_time_range(params.start_time, params.end_time)?;
+    if !matches!(params.download_mode.as_str(), "default" | "audio" | "video") {
+        return Err("err_invalid_download_mode".into());
+    }
+    crate::utils::validate_media_url(&params.url)?;
     let mut args: Vec<String> = vec![
         "--newline".to_string(),
         "--ignore-config".to_string(),  // 忽略用户系统配置，防止干扰 GUI
@@ -222,7 +148,7 @@ pub(super) fn build_download_args(
     args.extend(utils::build_youtube_extractor_args());
 
     // 格式选择
-    args.extend(build_format_args(params));
+    args.extend(build_format_args(params)?);
 
     // 代理
     if let Some(ref proxy) = params.proxy {
@@ -232,13 +158,11 @@ pub(super) fn build_download_args(
         }
     }
 
-    append_output_args(&mut args, params);
-    args.push("--windows-filenames".to_string());
-
-    // 不覆盖已有文件
-    if params.no_overwrites {
-        args.push("--no-overwrites".to_string());
-    }
+    append_output_args(&mut args, params, output_token)?;
+    args.extend([
+        "--no-overwrites".into(),
+        "--abort-on-unavailable-fragments".into(),
+    ]);
 
     // 并发分片下载
     if let Some(n) = params.concurrent_fragments {
@@ -321,15 +245,9 @@ pub(super) fn build_download_args(
             args.push(format!("FFmpeg:{}", ffmpeg_args));
         }
     }
-    // 用户自定义 yt-dlp 附加参数（如 --sleep-requests、--sleep-interval 等，解决 Issue #50）
-    if let Some(ref custom) = params.custom_args {
-        if !custom.trim().is_empty() {
-            let split_args = utils::split_command_line_args(custom)?;
-            for arg in split_args {
-                args.push(arg);
-            }
-        }
-    }
+    args.extend(utils::parse_media_options(
+        params.custom_args.as_deref().unwrap_or_default(),
+    )?);
 
     // 字幕
     append_subtitle_args(&mut args, &params.subtitles);
@@ -352,9 +270,6 @@ pub(super) fn build_download_args(
     if params.live_from_start {
         args.push("--live-from-start".to_string());
     }
-
-    // URL（必须放在最后）
-    args.push(params.url.clone());
 
     Ok(args)
 }
@@ -469,27 +384,74 @@ mod time_range_tests {
     }
 }
 
-/// Keep the template relative so yt-dlp can honor a separate `-P temp:...` path.
-fn append_output_args(args: &mut Vec<String>, params: &DownloadParams) {
+/// Keep paths inside the chosen destination. Every attempt has a fresh token;
+/// playlists and no-merge streams also get distinct names even for a constant template.
+pub(super) fn append_output_args(
+    args: &mut Vec<String>,
+    params: &DownloadParams,
+    token: &str,
+) -> Result<(), String> {
     let template = params
         .output_template
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or("%(title).200s.%(ext)s");
-    // Different selected streams can share an extension. A format suffix keeps
-    // separate files from overwriting or being mistaken for an existing download.
-    let template = if params.no_merge && params.download_mode == "default" {
-        let base = template.strip_suffix(".%(ext)s").unwrap_or(template);
-        format!("{base}.f%(format_id)s.%(ext)s")
+        .unwrap_or("%(title).160B [%(id)s].%(ext)s");
+    // Ignore template keys when checking separators (slice syntax uses ':').
+    let mut shape = String::new();
+    let mut chars = template.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '%' && chars.peek() == Some(&'%') {
+            chars.next();
+            shape.push('x');
+        } else if ch == '%' && chars.peek() == Some(&'(') {
+            if !chars.by_ref().any(|ch| ch == ')') {
+                return Err("err_output_template_relative".into());
+            }
+            shape.push('x');
+        } else {
+            shape.push(ch);
+        }
+    }
+    if shape.starts_with('~')
+        || shape.contains([':', '$', '%'])
+        || shape
+            .split(['/', '\\'])
+            .any(|part| part.chars().all(|ch| ch == '.' || ch.is_whitespace()))
+    {
+        return Err("err_output_template_relative".into());
+    }
+    let template = if template == "%(title).200s [%(id)s].%(ext)s" {
+        "%(title).160B [%(id)s].%(ext)s"
     } else {
-        template.to_string()
+        template
     };
+    let base = template.strip_suffix(".%(ext)s").unwrap_or(template);
+    let position = if params.no_playlist && !params.no_merge {
+        ""
+    } else {
+        "%(autonumber)05d-"
+    };
+    let dir = if cfg!(windows) {
+        // ntpath.expandvars decodes %% and $$ once when yt-dlp resolves --paths.
+        params.download_dir.replace('%', "%%").replace('$', "$$")
+    } else {
+        // posixpath.expandvars has no literal escape for '$'. Don't write to
+        // a different folder when a path happens to contain a variable name.
+        if params.download_dir.contains('$') {
+            return Err("err_download_dir_expansion".into());
+        }
+        params.download_dir.clone()
+    };
+    if dir.trim() != dir {
+        return Err("err_download_dir_expansion".into());
+    }
     args.extend([
         "--paths".to_string(),
-        format!("home:{}", params.download_dir),
+        format!("home:{dir}"),
         "-o".to_string(),
-        template,
+        format!("{base} [{position}%(format_id).24s {token}].%(ext)s"),
     ]);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -497,64 +459,48 @@ mod output_arg_tests {
     use super::{append_output_args, DownloadParams};
 
     #[test]
-    fn keeps_home_directory_separate_from_relative_template() {
+    fn isolates_jobs_and_entries_even_with_the_same_custom_template() {
         let params = DownloadParams {
             download_dir: r"E:\Downloads".into(),
-            output_template: Some("%(playlist_title)s/%(title)s.%(ext)s".into()),
+            output_template: Some("Album/Track.%(ext)s".into()),
+            no_merge: true,
             ..Default::default()
         };
-        let mut args = Vec::new();
-        append_output_args(&mut args, &params);
+        let mut first = Vec::new();
+        let mut second = Vec::new();
+        append_output_args(&mut first, &params, "job-1").unwrap();
+        append_output_args(&mut second, &params, "job-2").unwrap();
         assert_eq!(
-            args,
+            first,
             [
                 "--paths",
                 r"home:E:\Downloads",
                 "-o",
-                "%(playlist_title)s/%(title)s.%(ext)s"
+                "Album/Track [%(autonumber)05d-%(format_id).24s job-1].%(ext)s"
             ]
         );
+        assert_ne!(first, second);
     }
 
     #[test]
-    fn empty_template_uses_relative_default() {
-        let mut args = Vec::new();
-        append_output_args(
-            &mut args,
-            &DownloadParams {
-                download_dir: "/downloads".into(),
-                output_template: Some(String::new()),
+    fn rejects_paths_that_can_escape_the_destination() {
+        for template in [
+            "-",
+            "/absolute/file",
+            r"C:\absolute\file",
+            "album/../file",
+            r"..\file",
+        ] {
+            let params = DownloadParams {
+                output_template: Some(template.into()),
                 ..Default::default()
-            },
-        );
-        assert_eq!(
-            args,
-            ["--paths", "home:/downloads", "-o", "%(title).200s.%(ext)s"]
-        );
-    }
-
-    #[test]
-    fn separate_streams_get_distinct_names_inside_the_selected_directory() {
-        let mut args = Vec::new();
-        append_output_args(
-            &mut args,
-            &DownloadParams {
-                download_dir: "/downloads".into(),
-                download_mode: "default".into(),
-                no_merge: true,
-                output_template: Some("%(playlist_title)s/%(title)s.%(ext)s".into()),
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            args,
-            [
-                "--paths",
-                "home:/downloads",
-                "-o",
-                "%(playlist_title)s/%(title)s.f%(format_id)s.%(ext)s"
-            ]
-        );
+            };
+            // '-' becomes a regular filename with a suffix, never stdout.
+            assert_eq!(
+                append_output_args(&mut vec![], &params, "job").is_ok(),
+                template == "-"
+            );
+        }
     }
 }
 
@@ -636,258 +582,79 @@ mod subtitle_arg_tests {
 }
 
 #[cfg(test)]
-mod ffmpeg_requirement_tests {
+mod format_tests {
     use super::{build_format_args, requires_audio_extraction, requires_ffmpeg, DownloadParams};
 
     fn params() -> DownloadParams {
         DownloadParams {
-            id: "test".to_string(),
-            url: "https://example.com/video".to_string(),
-            download_dir: ".".to_string(),
-            download_mode: "default".to_string(),
-            video_format: Some("137".to_string()),
-            video_has_audio: false,
-            audio_format: Some("140".to_string()),
-            cookie_file: None,
-            cookie_browser: None,
-            proxy: None,
-            output_template: None,
-            concurrent_fragments: None,
-            no_overwrites: false,
-            embed_subs: false,
-            embed_thumbnail: false,
-            write_thumbnail: false,
-            write_description: false,
-            embed_metadata: false,
-            embed_chapters: false,
-            sponsorblock_remove: false,
-            extract_audio: false,
-            audio_convert_format: None,
-            no_merge: false,
-            recode_format: None,
-            remux_format: None,
-            limit_rate: None,
-            ffmpeg_args: None,
-            custom_args: None,
-            subtitles: Vec::new(),
-            start_time: None,
-            end_time: None,
-            force_keyframes_at_cuts: false,
-            no_playlist: false,
-            playlist_items: None,
-            live_from_start: false,
+            download_mode: "default".into(),
+            video_format: Some("137".into()),
+            audio_format: Some("140".into()),
+            ..Default::default()
         }
     }
 
-    #[test]
-    fn separate_video_and_audio_require_ffmpeg_for_default_download() {
-        assert!(requires_ffmpeg(&params()));
+    fn selector(value: &DownloadParams) -> Vec<String> {
+        build_format_args(value).unwrap()
     }
 
     #[test]
-    fn combined_formats_can_download_directly_without_ffmpeg() {
+    fn no_silent_substitution_even_for_playlists() {
         let mut value = params();
-        value.video_has_audio = true;
         value.audio_format = None;
-        assert!(!requires_ffmpeg(&value));
-        assert_eq!(build_format_args(&value), ["-f", "137"]);
-    }
-
-    #[test]
-    fn audio_only_sources_download_without_merging_or_requiring_ffmpeg() {
-        let mut value = params();
-        value.video_format = None;
-        assert!(!requires_ffmpeg(&value));
-        assert_eq!(build_format_args(&value), ["-f", "140"]);
         value.playlist_items = Some("1,2".into());
-        assert_eq!(build_format_args(&value), ["-f", "140/bestaudio/best"]);
-        value.playlist_items = None;
-        value.audio_format = Some("140-en+140-es".into());
-        assert!(requires_ffmpeg(&value));
         assert_eq!(
-            build_format_args(&value),
-            ["-f", "140-en+140-es", "--audio-multistreams"]
+            selector(&value),
+            [
+                "-f",
+                "bv*[format_id='137'][acodec!=none]/bv*[format_id='137'][acodec=none]+ba"
+            ]
         );
-        value.download_mode = "audio".into();
-        assert!(!requires_ffmpeg(&value));
-        assert_eq!(build_format_args(&value), ["-f", "140-en"]);
-    }
-
-    #[test]
-    fn extraction_downloads_the_selected_audio_without_fetching_video() {
-        let mut value = params();
+        assert!(requires_ffmpeg(&value));
         value.video_has_audio = true;
-        value.extract_audio = true;
-        assert_eq!(build_format_args(&value), ["-f", "140"]);
-        value.audio_format = Some("140-en+140-es".into());
-        assert_eq!(build_format_args(&value), ["-f", "140-en"]);
-        value.audio_format = None;
-        assert_eq!(build_format_args(&value), ["-f", "bestaudio/best"]);
-        assert!(requires_ffmpeg(&value));
-        value.download_mode = "video".into();
-        assert_eq!(build_format_args(&value), ["-f", "bestaudio/best"]);
+        assert!(!requires_ffmpeg(&value));
+        value.video_format = Some("137/best".into());
+        assert!(build_format_args(&value).is_err());
+        value.video_format = Some("best".into());
+        assert!(selector(&value)[1].contains("[format_id='best']"));
     }
 
     #[test]
-    fn audio_only_mode_extracts_audio_when_only_combined_formats_exist() {
+    fn separate_streams_and_multiple_audio_tracks_are_exact() {
         let mut value = params();
-        value.download_mode = "audio".into();
-        value.audio_format = None;
         assert!(requires_ffmpeg(&value));
+        value.audio_format = Some("140-en+140-es".into());
+        assert_eq!(
+            selector(&value),
+            [
+                "-f",
+                "bv*[format_id='137']+ba[format_id='140-en']+ba[format_id='140-es']",
+                "--audio-multistreams"
+            ]
+        );
+        value.no_merge = true;
+        assert!(!requires_ffmpeg(&value));
+        assert_eq!(
+            selector(&value),
+            [
+                "-f",
+                "bv*[format_id='137'],ba[format_id='140-en'],ba[format_id='140-es']"
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_video_only_and_audio_extraction_do_not_switch_to_other_formats() {
+        let mut value = params();
+        value.download_mode = "video".into();
+        assert_eq!(selector(&value), ["-f", "bv[format_id='137']"]);
+        value.extract_audio = true;
+        assert!(requires_ffmpeg(&value));
+        assert_eq!(selector(&value), ["-f", "ba[format_id='140']"]);
+        value.download_mode = "audio".into();
+        value.extract_audio = false;
+        value.audio_format = None;
         assert!(requires_audio_extraction(&value));
-        assert_eq!(build_format_args(&value), ["-f", "bestaudio/best"]);
-    }
-
-    #[test]
-    fn explicit_no_merge_allows_separate_output_files() {
-        let mut value = params();
-        value.no_merge = true;
-        assert!(!requires_ffmpeg(&value));
-    }
-
-    #[test]
-    fn no_merge_downloads_video_and_audio_separately() {
-        let mut value = params();
-        value.no_merge = true;
-        let args = build_format_args(&value);
-        assert_eq!(args, ["-f", "137,140"]);
-    }
-
-    #[test]
-    fn no_merge_without_selected_formats_never_uses_the_default_merged_selector() {
-        let mut value = params();
-        value.no_merge = true;
-        value.video_format = None;
-        value.audio_format = None;
-        assert!(!requires_ffmpeg(&value));
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "bestvideo/best[vcodec!=none],bestaudio"]
-        );
-        value.playlist_items = Some("1,2".into());
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "bestvideo/best[vcodec!=none],bestaudio"]
-        );
-        value.video_format = Some(String::new());
-        value.audio_format = Some(String::new());
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "bestvideo/best[vcodec!=none],bestaudio"]
-        );
-    }
-
-    #[test]
-    fn no_merge_keeps_audio_extraction_and_single_stream_modes_separate() {
-        let mut value = params();
-        value.no_merge = true;
-        value.video_format = None;
-        value.audio_format = None;
-        value.playlist_items = Some("1,2".into());
-        value.extract_audio = true;
-        assert!(requires_ffmpeg(&value));
-        assert_eq!(build_format_args(&value), ["-f", "bestaudio/best"]);
-        value.extract_audio = false;
-        value.download_mode = "audio".into();
-        assert!(requires_ffmpeg(&value));
-        assert_eq!(build_format_args(&value), ["-f", "bestaudio/best"]);
-        value.download_mode = "video".into();
-        assert!(!requires_ffmpeg(&value));
-        assert_eq!(build_format_args(&value), ["-f", "bestvideo/best"]);
-    }
-
-    #[test]
-    fn merge_mode_uses_plus_concatenation() {
-        let args = build_format_args(&params());
-        assert_eq!(args, ["-f", "137+140"]);
-    }
-
-    #[test]
-    fn multiple_audio_tracks_are_preserved_in_the_merged_video() {
-        let mut value = params();
-        value.audio_format = Some("140-en+140-es".into());
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "137+140-en+140-es", "--audio-multistreams"]
-        );
-        value.download_mode = "video".into();
-        assert_eq!(build_format_args(&value), ["-f", "137"]);
-        value.download_mode = "default".into();
-        value.no_merge = true;
-        assert_eq!(build_format_args(&value), ["-f", "137,140-en,140-es"]);
-    }
-
-    #[test]
-    fn selected_audio_is_not_dropped_when_video_already_has_a_soundtrack() {
-        let mut value = params();
-        value.video_has_audio = true;
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "137+140", "--audio-multistreams"]
-        );
-        value.no_merge = true;
-        assert_eq!(build_format_args(&value), ["-f", "137,140"]);
-    }
-
-    #[test]
-    fn separate_playlist_formats_each_have_their_own_fallback() {
-        let mut value = params();
-        value.no_merge = true;
-        value.playlist_items = Some("1,2".into());
-        value.audio_format = Some("140-en+140-es".into());
-        assert_eq!(
-            build_format_args(&value),
-            [
-                "-f",
-                "137/bestvideo/best,140-en/bestaudio/best,140-es/bestaudio/best"
-            ]
-        );
-        value.video_format = None;
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "140-en/bestaudio/best,140-es/bestaudio/best"]
-        );
-    }
-
-    #[test]
-    fn playlist_entries_can_fall_back_when_format_ids_differ() {
-        let mut value = params();
-        value.playlist_items = Some("1,2".into());
-        assert_eq!(
-            build_format_args(&value),
-            ["-f", "137+140/bestvideo*+bestaudio/best"]
-        );
-        value.download_mode = "audio".into();
-        assert_eq!(build_format_args(&value), ["-f", "140/bestaudio"]);
-        value.no_playlist = true;
-        assert_eq!(build_format_args(&value), ["-f", "140"]);
-    }
-
-    #[test]
-    fn single_video_selection_does_not_fall_back_to_a_silent_video() {
-        let mut value = params();
-        value.audio_format = None;
-        assert_eq!(
-            build_format_args(&value),
-            [
-                "-f",
-                "137[acodec!=none]/137+bestaudio/best[vcodec!=none][acodec!=none]"
-            ]
-        );
-        assert!(requires_ffmpeg(&value));
-    }
-
-    #[test]
-    fn postprocessing_requires_ffmpeg_even_without_a_merge() {
-        let mut value = params();
-        value.no_merge = true;
-        value.extract_audio = true;
-        assert!(requires_ffmpeg(&value));
-        value.extract_audio = false;
-        value.start_time = Some(15.0);
-        assert!(requires_ffmpeg(&value));
-        value.start_time = None;
-        value.remux_format = Some("mkv".into());
-        assert!(requires_ffmpeg(&value));
+        assert_eq!(selector(&value), ["-f", "ba/b"]);
     }
 }

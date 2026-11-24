@@ -1,5 +1,6 @@
 import type { NormalizedAudioFormat, NormalizedVideoFormat, VideoFormat } from "@/types";
 import { getCodecKey, getCodecLabel } from "./formats.ts";
+import { nativeTier, resolutionTier, tierLabel } from "./vinylSelection";
 
 /** 格式化文件大小为可读字符串（B / KB / MB / GB） */
 export const formatFileSize = (bytes: number): string => {
@@ -37,16 +38,10 @@ export const estimateFileSize = (
 /**
  * 格式化分辨率描述
  */
-export const formatResolutionLabel = (height?: number | null, _width?: number | null): string => {
-  if (!height) return "未知清晰度";
-  if (height >= 4320) return `8K (${height}p)`;
-  if (height >= 2160) return `4K (${height}p)`;
-  if (height >= 1440) return `2K (${height}p)`;
-  if (height >= 1080) return `1080p`;
-  if (height >= 720) return `720p`;
-  if (height >= 480) return `480p`;
-  if (height >= 360) return `360p`;
-  return `${height}p`;
+export const formatResolutionLabel = (height?: number | null, width?: number | null): string => {
+  const tier = resolutionTier(height, width);
+  if (!tier) return "—";
+  return width && height ? `${tierLabel(tier)} (${width}×${height})` : tierLabel(tier);
 };
 
 /**
@@ -201,7 +196,7 @@ export const normalizeAudioFormat = (
  * 4. 文件大小降序
  */
 export const compareVideoFormats = (a: VideoFormat, b: VideoFormat): number => {
-  const hDiff = (b.height || 0) - (a.height || 0);
+  const hDiff = (nativeTier(b) ?? 0) - (nativeTier(a) ?? 0);
   if (hDiff !== 0) return hDiff;
 
   const fpsDiff = (b.fps || 0) - (a.fps || 0);

@@ -40,7 +40,7 @@ const handleSelectDir = async () => {
       />
       <n-button size="small" @click="handleSelectDir">
         <template #icon>
-          <n-icon>
+          <n-icon aria-hidden="true">
             <icon-mdi-folder-open-outline />
           </n-icon>
         </template>
@@ -59,7 +59,7 @@ const handleSelectDir = async () => {
       />
       <n-button size="small" @click="handleSelectDir">
         <template #icon>
-          <n-icon>
+          <n-icon aria-hidden="true">
             <icon-mdi-folder-open-outline />
           </n-icon>
         </template>

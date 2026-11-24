@@ -81,7 +81,7 @@ const handleSubmit = async () => {
   try {
     const accepted = await downloadStore.retryTask(editingId, draft.value);
     if (accepted) show.value = false;
-    else window.$message.error(formatError(props.task.error || t("downloads.retryFailed")));
+    else window.$message.error(t("downloads.retryFailed"));
   } catch (error: unknown) {
     window.$message.error(formatError(error instanceof Error ? error.message : String(error)));
   } finally {

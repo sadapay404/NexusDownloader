@@ -92,7 +92,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
         primaryColorPressed: "#E5A93B",
         primaryColorSuppl: "#e3bf63",
       }
-    : { borderRadius: "9px" },
+    : { borderRadius: "9px", textColor3: "#55505a", placeholderColor: "#62606a" },
   Layout: theme.value ? { color: "#121212", headerColor: "#181818", footerColor: "#181818" } : {},
   Card: theme.value ? { borderRadius: "13px" } : {},
   Button: theme.value

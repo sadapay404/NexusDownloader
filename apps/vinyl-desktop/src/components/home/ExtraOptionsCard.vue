@@ -221,7 +221,7 @@ watch(endTime, (val) => {
               </n-input>
               <n-button size="small" secondary @click="resetTemplate">
                 <template #icon>
-                  <n-icon size="14"><icon-mdi-refresh /></n-icon>
+                  <n-icon aria-hidden="true" size="14"><icon-mdi-refresh /></n-icon>
                 </template>
               </n-button>
             </n-flex>

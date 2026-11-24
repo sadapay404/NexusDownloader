@@ -106,8 +106,8 @@ test("refresh retains selected formats and playlist entries when they remain ava
   expect(item.customArgs).toBe("--sleep-requests 2");
 
   store.refresh(id, { ...refreshed, videoFormats: [format("v3")], audioFormats: [format("a3")] });
-  expect(item.selectedVideoFormat).toBe("v3");
-  expect(item.selectedAudioFormat).toBe("a3");
+  expect(item.selectedVideoFormat).toBe("v2");
+  expect(item.selectedAudioFormat).toBe("a2+a3");
 });
 
 test("refresh does not silently select other episodes when selected ones disappear", () => {

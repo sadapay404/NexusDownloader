@@ -35,7 +35,7 @@ export default defineConfig(async () => ({
   ],
   resolve: {
     alias: {
-      "@": resolve(__dirname, "src"),
+      "@": resolve(import.meta.dirname, "src"),
     },
   },
   clearScreen: false,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { normalizeAudioFormat, normalizeVideoFormat } from "@/utils/normalizer";
 import { getCodecKey, getCodecLabel } from "@/utils/formats";
-import { nativeTier, tierLabel } from "@/utils/vinylSelection";
+import { hasAudio, videoFormatsForMode } from "@/utils/vinylSelection";
 import { useSettingStore } from "@/stores/setting";
 import { useI18n } from "vue-i18n";
 import type { VideoFormat, VideoInfo } from "@/types";
@@ -14,6 +14,8 @@ const props = defineProps<{
   audioFormats: VideoFormat[];
   videoInfo: VideoInfo;
   extractAudio?: boolean;
+  isPlaylist?: boolean;
+  noMerge?: boolean;
 }>();
 
 const downloadMode = defineModel<"default" | "video" | "audio">("downloadMode", {
@@ -56,13 +58,17 @@ const createCodecOptions = (formats: VideoFormat[]) => {
   ];
 };
 
-const videoCodecOptions = computed(() => createCodecOptions(props.videoFormats));
+const modeVideoFormats = computed(() => videoFormatsForMode(props.videoFormats, downloadMode.value));
+const selectedVideo = computed(() => props.videoFormats.find((f) => f.format_id === selectedVideoFormat.value));
+const noAudioForVideo = computed(() => downloadMode.value === "default" && !props.extractAudio &&
+  selectedVideo.value && !hasAudio(selectedVideo.value) && !props.audioFormats.length);
+const videoCodecOptions = computed(() => createCodecOptions(modeVideoFormats.value));
 const audioCodecOptions = computed(() => createCodecOptions(props.audioFormats));
 
 const filteredVideoFormats = computed(() =>
   selectedVideoCodec.value === "all"
-    ? props.videoFormats
-    : props.videoFormats.filter(
+    ? modeVideoFormats.value
+    : modeVideoFormats.value.filter(
         (format) => getCodecKey(format.vcodec) === selectedVideoCodec.value,
       ),
 );
@@ -75,10 +81,18 @@ const filteredAudioFormats = computed(() =>
       ),
 );
 
-const formatsIncomplete = computed(() => {
-  if (props.audioFormats.length > 0 || props.videoFormats.length === 0) return false;
-  return Math.max(...props.videoFormats.map((format) => format.height || 0)) <= 360;
-});
+function chooseVideo(id: string) {
+  if (selectedVideoFormat.value === id) return;
+  selectedVideoFormat.value = id;
+  if (hasAudio(selectedVideo.value) && !props.extractAudio) selectedAudioFormat.value = "";
+}
+
+function chooseMode(mode: "default" | "video" | "audio") {
+  downloadMode.value = mode;
+  if (mode !== "audio" && !modeVideoFormats.value.some((format) => format.format_id === selectedVideoFormat.value)) {
+    chooseVideo(props.isPlaylist ? "" : modeVideoFormats.value[0]?.format_id ?? "");
+  }
+}
 
 /** 是否为正在直播 */
 const isLive = computed(
@@ -88,26 +102,17 @@ const isLive = computed(
 /** 视频格式下拉选项（规范化固定结构：清晰度+帧率 · 编码 · 动态范围 · 容器 · 大小 · 编号） */
 const videoFormatOptions = computed(() => {
   const duration = props.videoInfo.duration || 0;
-  return filteredVideoFormats.value.map((f) => {
+  const options = filteredVideoFormats.value.map((f) => {
     const n = normalizeVideoFormat(f, duration);
-    const tier = nativeTier(f);
-    const resolutionLabel =
-      tier && n.width < n.height && n.width > 0
-        ? `${tierLabel(tier)} (${n.width}×${n.height})`
-        : n.resolutionLabel;
     const parts = [
-      `${resolutionLabel}${n.fpsLabel ? ` ${n.fpsLabel}` : ""}`,
-      n.codec,
-      n.dynamicRange,
-      n.container,
-      n.filesizeLabel,
+      `${n.resolutionLabel}${n.fpsLabel ? ` ${n.fpsLabel}` : ""}`,
+      n.codec, n.dynamicRange, n.container, n.filesizeLabel,
+      hasAudio(f) ? t("detail.builtInAudio") : t("detail.videoStream"),
       `#${n.formatId}`,
     ].filter(Boolean);
-    return {
-      label: parts.join(" · "),
-      value: n.formatId,
-    };
+    return { label: parts.join(" · "), value: n.formatId };
   });
+  return props.isPlaylist ? [{ label: t("detail.automaticFormat"), value: "" }, ...options] : options;
 });
 
 /** 音频格式下拉选项（规范化固定结构：[语言 · 角色] · 码率 · 编码 · 声道 · 容器 · 大小 · 编号） */
@@ -138,7 +143,7 @@ const handleVideoCodecChange = (value: string) => {
   const currentIsVisible = filteredVideoFormats.value.some(
     (format) => format.format_id === selectedVideoFormat.value,
   );
-  if (!currentIsVisible) selectedVideoFormat.value = filteredVideoFormats.value[0]?.format_id || "";
+  if (!currentIsVisible) chooseVideo(filteredVideoFormats.value[0]?.format_id || "");
 };
 
 const handleAudioCodecChange = (value: string) => {
@@ -198,14 +203,17 @@ watch(
 <template>
   <n-card :title="$t('detail.downloadMethod')" size="small">
     <n-flex vertical :size="12">
-      <n-radio-group v-model:value="downloadMode" size="small">
+      <n-radio-group :value="downloadMode" size="small" :aria-label="$t('detail.downloadMethod')" @update:value="chooseMode">
         <n-radio-button value="default">{{ $t("common.default") }}</n-radio-button>
-        <n-radio-button value="video">{{ $t("detail.videoOnly") }}</n-radio-button>
+        <n-radio-button value="video" :disabled="!videoFormats.some((format) => !hasAudio(format))">{{ $t("detail.videoOnly") }}</n-radio-button>
         <n-radio-button value="audio">{{ $t("detail.audioOnly") }}</n-radio-button>
       </n-radio-group>
 
-      <n-alert v-if="formatsIncomplete" type="warning" :bordered="false">
-        {{ $t("detail.incompleteFormatsHint") }}
+      <n-alert v-if="isPlaylist" type="info" :bordered="false">
+        {{ $t("detail.playlistFormatHint") }}
+      </n-alert>
+      <n-alert v-if="noAudioForVideo && !noMerge" type="warning" :bordered="false">
+        {{ $t("detail.noAudioForFormat") }}
       </n-alert>
 
       <n-alert v-if="isLive" type="info" :bordered="false">
@@ -225,10 +233,12 @@ watch(
           @update:value="handleVideoCodecChange"
         />
         <n-select
-          v-model:value="selectedVideoFormat"
+          :value="selectedVideoFormat || (isPlaylist ? '' : null)"
+          :aria-label="$t('detail.videoFormatChoice')"
           :options="videoFormatOptions"
           size="small"
           style="min-width: 0"
+          @update:value="chooseVideo"
         />
       </n-flex>
 
@@ -249,6 +259,9 @@ watch(
             multipleAudio ? selectedAudioFormat.split('+').filter(Boolean) : selectedAudioFormat
           "
           :multiple="multipleAudio"
+          clearable
+          :placeholder="$t('detail.automaticAudio')"
+          :aria-label="$t('detail.audioFormatChoice')"
           :options="audioFormatOptions"
           size="small"
           style="min-width: 0"

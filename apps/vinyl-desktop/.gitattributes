@@ -1,1 +1,4 @@
 * text=auto eol=lf
+
+# Unified diffs preserve the space prefix before upstream indentation.
+patches/*.patch whitespace=-space-before-tab

@@ -10,6 +10,9 @@ import { useSettingStore } from "@/stores/setting";
 import { useStatusStore } from "@/stores/status";
 import { useVideoStore } from "@/stores/video";
 import { getPlaylistDownloadOptions } from "@/utils/playlist";
+import { formatError } from "@/utils/format";
+import { formatFpsLabel, formatResolutionLabel } from "@/utils/normalizer";
+import { hasAudio } from "@/utils/vinylSelection";
 import { isValidTimeRange } from "@/utils/validate";
 import type { DownloadTask, FfmpegStatus, PendingItem } from "@/types";
 
@@ -52,8 +55,7 @@ export const useDownloadLauncher = () => {
       const video = item.videoFormats.find(
         (format) => format.format_id === item.selectedVideoFormat,
       );
-      if (video?.height) parts.push(`${video.height}p`);
-      if (video?.fps) parts.push(`${video.fps}fps`);
+      if (video) parts.push(formatResolutionLabel(video.height, video.width), formatFpsLabel(video.fps));
       if (item.downloadMode === "video") parts.push(t("detail.videoOnly"));
     }
 
@@ -62,11 +64,11 @@ export const useDownloadLauncher = () => {
       const end = item.endTime != null ? formatTime(timeToSeconds(item.endTime)) : t("detail.end");
       parts.push(`✂${start}-${end}`);
     }
-    return parts.join(" ") || t("detail.defaultQuality");
+    return parts.filter(Boolean).join(" ") || t("detail.defaultQuality");
   };
 
   const createPreparingTask = async (url: string): Promise<string> => {
-    const taskId = `prepare_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const taskId = `prepare_${crypto.randomUUID()}`;
     await downloadStore.addTask({
       id: taskId,
       url,
@@ -84,7 +86,7 @@ export const useDownloadLauncher = () => {
       params: {
         url,
         downloadDir: settingStore.downloadDir,
-        downloadMode: settingStore.quickDownloadMode,
+        downloadMode: "preparation",
         videoFormat: null,
         audioFormat: null,
         cookieFile: null,
@@ -119,11 +121,11 @@ export const useDownloadLauncher = () => {
     return taskId;
   };
 
-  const markPreparationError = async (taskId: string): Promise<void> => {
+  const markPreparationError = async (taskId: string, message = t("home.quickPrepareFailed")): Promise<void> => {
     const task = downloadStore.tasks.find((item) => item.id === taskId);
     if (!task || task.status !== "preparing") return;
     task.status = "error";
-    task.error = t("home.quickPrepareFailed");
+    task.error = message;
     // preparing 行已在创建时落库，失败态必须同步回去，否则重启前 DB 里一直是 preparing
     await downloadStore.updateTask(task);
   };
@@ -151,14 +153,32 @@ export const useDownloadLauncher = () => {
     const selectedVideo = item.videoFormats.find(
       (format) => format.format_id === item.selectedVideoFormat,
     );
-    const videoHasAudio = Boolean(selectedVideo?.acodec && selectedVideo.acodec !== "none");
-    const extractAudio =
-      item.extractAudio || (item.downloadMode === "audio" && !item.selectedAudioFormat);
+    const videoHasAudio = hasAudio(selectedVideo);
+    const extractAudio = item.extractAudio || (item.downloadMode === "audio" && !item.selectedAudioFormat);
+    const useVideo = !extractAudio && item.downloadMode !== "audio";
+    const useAudio = extractAudio || item.downloadMode !== "video";
+    const requestedAudio = useAudio ? item.selectedAudioFormat : "";
+    const requestedVideo = useVideo ? item.selectedVideoFormat : "";
+    const rejectSelection = async (message: string): Promise<DownloadLaunchResult> => {
+      window.$message.warning(message);
+      if (preparingTaskId) await markPreparationError(preparingTaskId, message);
+      return "failed";
+    };
+    if ((requestedVideo && !selectedVideo) || (requestedAudio && requestedAudio.split("+").some(
+      (id) => !item.audioFormats.some((format) => format.format_id === id),
+    ))) return rejectSelection(t("detail.selectedFormatMissing"));
+    if (useVideo && item.downloadMode === "video" &&
+        (!item.videoFormats.some((format) => !hasAudio(format)) || videoHasAudio)) {
+      return rejectSelection(t("detail.noVideoOnlyFormat"));
+    }
+    if (useVideo && item.downloadMode === "default" && selectedVideo && !videoHasAudio &&
+        !item.noMerge && !item.audioFormats.length) {
+      return rejectSelection(t("detail.noAudioForFormat"));
+    }
+    const preferVideo = useVideo && item.downloadMode === "default" && item.videoFormats.length > 0;
     const requiresFfmpeg =
-      (item.downloadMode === "default" &&
-        (Boolean(item.selectedVideoFormat) || item.selectedAudioFormat.includes("+")) &&
-        (item.isPlaylist || !videoHasAudio || Boolean(item.selectedAudioFormat)) &&
-        !item.noMerge) ||
+      (!extractAudio && item.downloadMode === "default" && !item.noMerge &&
+        ((Boolean(requestedVideo) && (!videoHasAudio || Boolean(requestedAudio))) || requestedAudio.includes("+") || (preferVideo && Boolean(requestedAudio)))) ||
       extractAudio ||
       item.embedSubs ||
       item.embedThumbnail ||
@@ -184,7 +204,7 @@ export const useDownloadLauncher = () => {
       }
     }
 
-    const taskId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const taskId = preparingTaskId ?? `dl_${crypto.randomUUID()}`;
     const { cookieFile, cookieBrowser } = await videoStore.getCookieArgs();
     const outputTemplate = composeOutputTemplate(
       settingStore.outputTemplate,
@@ -205,9 +225,10 @@ export const useDownloadLauncher = () => {
       url: item.url,
       downloadDir: settingStore.downloadDir,
       downloadMode: item.downloadMode,
-      videoFormat: item.selectedVideoFormat || null,
+      videoFormat: requestedVideo || null,
       videoHasAudio,
-      audioFormat: item.selectedAudioFormat || null,
+      preferVideo,
+      audioFormat: requestedAudio || null,
       cookieFile,
       cookieBrowser,
       proxy: settingStore.proxy || null,
@@ -256,9 +277,10 @@ export const useDownloadLauncher = () => {
     const result = await downloadStore.addTask(task, preparingTaskId);
     if (result === "failed") {
       const failedTask = downloadStore.tasks.find((candidate) => candidate.id === taskId);
-      if (failedTask?.status === "error") {
-        window.$message.error(failedTask.error || t("detail.startDownloadFailed"));
+      if (preparingTaskId && failedTask?.status === "preparing") {
+        await markPreparationError(preparingTaskId, t("errors.err_download_history_write"));
       }
+      window.$message.error(failedTask?.error ? formatError(failedTask.error) : t("detail.startDownloadFailed"));
     }
     return result === "preparing" ? "failed" : result;
   };

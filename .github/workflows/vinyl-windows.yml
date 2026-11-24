@@ -7,6 +7,11 @@ on:
       - 'apps/vinyl-desktop/**'
       - '.github/workflows/vinyl-windows.yml'
   workflow_dispatch:
+    inputs:
+      native_soak:
+        description: Run an additional 60-minute installed Windows soak with synthetic media
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,7 +23,7 @@ concurrency:
 jobs:
   windows-x64:
     runs-on: windows-2025
-    timeout-minutes: 50
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: apps/vinyl-desktop
@@ -30,13 +35,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Verify pinned downloader sources
-        shell: bash
-        run: sha256sum -c --quiet UPSTREAM-SHA256SUMS
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.22.3'
+      - name: Verify pinned upstream and fork sources
+        run: node scripts/verification/verify-source.mjs
       - name: Install Rust and pnpm
         shell: pwsh
         run: |
@@ -46,6 +50,12 @@ jobs:
           corepack enable pnpm
           pnpm --version
           pnpm install --frozen-lockfile
+      - name: Check frontend dependency advisories
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm audit --prod
+          pnpm audit
       - name: Test renderer
         shell: pwsh
         run: |
@@ -60,6 +70,9 @@ jobs:
         with:
           workspaces: apps/vinyl-desktop/src-tauri -> target
           cache-on-failure: 'true'
+      - name: Test locked Rust backend on Windows
+        shell: pwsh
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
       - name: Build Tauri x64 NSIS Setup
         shell: pwsh
         run: |
@@ -73,7 +86,7 @@ jobs:
             Write-Output "::error title=Tauri x64 build failed::$summary"
             exit $code
           }
-      - name: Verify Setup, Start shortcut, native file save and uninstall
+      - name: Verify Setup, installed native regressions and uninstall
         shell: pwsh
         run: |
           $setups = @(Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -File -Filter '*_x64-setup.exe')
@@ -92,3 +105,41 @@ jobs:
           path: ${{ runner.temp }}/NexusDownloader-Windows-x64/*
           if-no-files-found: error
           retention-days: 14
+
+  windows-native-soak:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_soak
+    needs: windows-x64
+    runs-on: windows-2025
+    timeout-minutes: 100
+    defaults:
+      run:
+        working-directory: apps/vinyl-desktop
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    steps:
+      - name: Check out verification sources
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.22.3'
+      - name: Install locked verification tooling
+        run: |
+          corepack enable pnpm
+          pnpm install --frozen-lockfile
+      - name: Retrieve the verified Setup from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: NexusDownloader-Windows-x64
+          path: ${{ runner.temp }}/Vinyl-Setup
+      - name: Verify Setup and run a real one-hour installed soak
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\Vinyl-Setup" -File -Filter '*-Setup.exe')
+          if ($files.Count -ne 1) { throw 'Expected one previously verified Setup' }
+          $setup = $files[0].FullName
+          $hash = (Get-Content -Raw -LiteralPath "$setup.sha256").Trim().Split(' ')[0]
+          if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -ne $hash) { throw 'Setup checksum mismatch' }
+          .\verification\windows\verify-installer.ps1 -Setup $setup -Output "$env:RUNNER_TEMP\Soak-verified" -UseRunnerWebView2Policy -NativeSoakMinutes 60

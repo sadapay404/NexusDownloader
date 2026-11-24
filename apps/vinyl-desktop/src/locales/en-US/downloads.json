@@ -25,7 +25,7 @@
     "cancelAndDelete": "Cancel Download",
     "confirmCancelAndDelete": "Are you sure you want to cancel this download?",
     "cancelFailed": "Failed to cancel",
-    "retryFailed": "Failed to retry",
+    "retryFailed": "Could not retry this download. The task remains in history.",
     "removeTask": "Remove Task",
     "confirmRemoveTask": "Are you sure you want to remove this task from the list?",
     "alsoDeleteFiles": "Also delete downloaded files",
@@ -47,7 +47,7 @@
     "reDownload": "Re-download",
     "cancelledTab": "Cancelled",
     "failedTab": "Failed",
-    "confirmReDownload": "Are you sure you want to re-download this video? It will be added as a new task.",
+    "confirmReDownload": "Save this video as a separate file? Your existing file and history will be kept.",
     "clearCancelled": "Clear Cancelled",
     "confirmClearCancelled": "Are you sure you want to clear all cancelled tasks?",
     "clearFailed": "Clear Failed",
@@ -62,11 +62,18 @@
     "videoFormatId": "Video format ID",
     "audioFormatIds": "Audio format IDs (+ separates tracks)",
     "retainedOptions": "Retained original options",
-    "editSingleAudio": "Audio-only mode and audio extraction require a single audio format ID."
+    "editSingleAudio": "Audio-only mode and audio extraction require a single audio format ID.",
+    "savedFileUnavailable": "Saved file unavailable",
+    "savedFileUnavailableDetail": "The saved file or its drive is unavailable. This download stays in your history.",
+    "stopping": "Confirming stop…",
+    "openSource": "Open source link",
+    "toggleLog": "Toggle download log",
+    "inspectAgain": "Inspect link again"
   },
   "pending": {
     "empty": "No pending items",
-    "goParse": "Parse a video"
+    "goParse": "Parse a video",
+    "refreshFormats": "Refresh available formats"
   },
   "detail": {
     "videoLink": "Video URL",
@@ -148,6 +155,16 @@
     "viewYi": "M",
     "invalidTimeRange": "Choose a range within the video duration, with the end after the start.",
     "forceKeyframesAtCuts": "Generate keyframes at trim points",
-    "forceKeyframesAtCutsHint": "Re-encodes more slowly to reduce visual artifacts around cut points. Turn off to use fast trimming."
+    "forceKeyframesAtCutsHint": "Re-encodes more slowly to reduce visual artifacts around cut points. Turn off to use fast trimming.",
+    "selectedFormatMissing": "The selected format is no longer available. Refresh the source and choose a format explicitly.",
+    "noVideoOnlyFormat": "There is no video-only stream for this choice. Use Default to save a combined file.",
+    "noAudioForFormat": "No separate audio is available for this format. Choose a format with built-in audio, or choose Video Only.",
+    "builtInAudio": "With audio",
+    "videoStream": "Video stream",
+    "automaticFormat": "Automatic for each entry",
+    "automaticAudio": "Automatic or built-in audio",
+    "playlistFormatHint": "Specific format IDs must be available for each selected playlist entry. Use Automatic for a playlist with mixed formats.",
+    "videoFormatChoice": "Video format",
+    "audioFormatChoice": "Audio format"
   }
 }

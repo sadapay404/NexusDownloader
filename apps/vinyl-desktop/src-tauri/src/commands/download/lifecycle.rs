@@ -1,18 +1,17 @@
-//! 下载子进程的创建与生命周期启动。
+//! Create a tracked process tree and a private completion manifest per attempt.
 
-#[cfg(target_os = "windows")]
-use crate::commands::CREATE_NO_WINDOW;
 use crate::utils;
-use std::process::Stdio;
+use std::{path::Path, process::Stdio, sync::Arc};
 use tauri::{AppHandle, Manager};
+use tokio::sync::mpsc;
 
 use super::{
     arguments::{build_download_args, requires_ffmpeg},
     model::{DownloadParams, DownloadProcessInfo, DownloadState},
     output::{spawn_completion_handler, spawn_output_reader},
+    process_tree::ProcessTree,
 };
 
-/// 启动下载任务
 #[tauri::command]
 pub async fn start_download(
     app: AppHandle,
@@ -20,7 +19,7 @@ pub async fn start_download(
     params: DownloadParams,
 ) -> Result<(), String> {
     let ytdlp_path = utils::get_ytdlp_path(&app)?;
-    if !ytdlp_path.exists() {
+    if !ytdlp_path.is_file() {
         return Err("err_ytdlp_not_installed".to_string());
     }
     if requires_ffmpeg(&params) {
@@ -29,93 +28,127 @@ pub async fn start_download(
             return Err("err_ffmpeg_required_for_merge".to_string());
         }
     }
-
-    let args = build_download_args(&app, &params)?;
-
-    // 生成临时文件路径，用于 --print-to-file 输出最终文件路径
+    let output_dir = Path::new(&params.download_dir);
+    if !output_dir.is_absolute() || !output_dir.is_dir() {
+        return Err("err_invalid_download_dir".into());
+    }
+    let destination = output_dir
+        .canonicalize()
+        .map_err(|_| "err_invalid_download_dir")?;
     let app_data = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("err_app_data_dir:{}", e))?;
-    let filepath_file = app_data
-        .join(format!("{}_filepath.txt", params.id))
-        .to_string_lossy()
+        .map_err(|e| format!("err_app_data_dir:{e}"))?;
+    std::fs::create_dir_all(&app_data).map_err(|e| format!("err_app_data_dir:{e}"))?;
+    // The random manifest basename is also the filename namespace. Do not reuse
+    // a manifest or namespace after a crash, retry, or explicit re-download.
+    let manifest = tempfile::Builder::new()
+        .prefix("nx-")
+        .rand_bytes(12)
+        .tempfile_in(app_data)
+        .map_err(|e| format!("err_create_file:{e}"))?
+        .into_temp_path();
+    let token = manifest
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("err_create_output_manifest")?
         .to_string();
-
-    // 拼接完整参数：基础参数 + --print-to-file
-    let mut full_args = args;
-    full_args.push("--print-to-file".to_string());
-    full_args.push("after_move:filepath".to_string());
-    full_args.push(filepath_file.clone());
-
-    // 启动 yt-dlp 子进程
+    let mut args = build_download_args(&app, &params, &token)?;
+    args.extend([
+        "--print-to-file".into(),
+        "after_move:%(filepath)j".into(),
+        manifest_template(&manifest)?,
+        "--".into(),
+        params.url.clone(),
+    ]);
     let mut cmd = tokio::process::Command::new(&ytdlp_path);
-    cmd.args(&full_args)
+    cmd.args(args)
         .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8");
-    // 应用异常退出时托底杀掉子进程，避免 yt-dlp/ffmpeg 变成孤儿
-    cmd.kill_on_drop(true);
-    // tokio 的 spawn 默认继承 stdin，置空避免 yt-dlp 在交互场景下等待输入挂住
-    cmd.stdin(Stdio::null())
+        .env("PYTHONIOENCODING", "utf-8")
+        .kill_on_drop(true)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("err_start_download:{}", e))?;
-
-    let pid = child.id().ok_or("err_get_pid")?;
-    let task_id = params.id.clone();
-
-    // 计算裁剪片段时长（用于 ffmpeg 进度计算）
+    let task_id = params.id;
     let clip_duration = match (params.start_time, params.end_time) {
         (Some(s), Some(e)) => Some(e - s),
         (None, Some(e)) => Some(e),
         _ => None,
     };
-
-    // 记录进程信息
+    let (cancel_tx, cancel_rx) = mpsc::channel(1);
     let processes = state.processes.clone();
-    {
+    let (child, tree, stdout, stderr, attempt) = {
         let mut map = processes.lock().map_err(|e| e.to_string())?;
+        if map.contains_key(&task_id) {
+            return Err("err_download_already_running".into());
+        }
+        // Commit before spawning so a crash never replays an already-started task.
+        use crate::db::tasks::{mark_task_downloading, mark_task_error};
+        let db = app.state::<crate::db::DatabaseState>();
+        let attempt = mark_task_downloading(&db, &task_id)?;
+        let mut spawn = || -> Result<_, String> {
+            let (mut child, tree) =
+                ProcessTree::spawn(&mut cmd).map_err(|e| format!("err_start_download:{e}"))?;
+            let stdout = child.stdout.take().ok_or("err_capture_stdout")?;
+            let stderr = child.stderr.take().ok_or("err_capture_stderr")?;
+            Ok((child, Arc::new(tree), stdout, stderr))
+        };
+        let (child, tree, stdout, stderr) = match spawn() {
+            Ok(handles) => handles,
+            Err(error) => {
+                mark_task_error(&db, &task_id, attempt, &error)
+                    .map_err(|detail| format!("err_download_history_write:{detail}"))?;
+                return Err(error);
+            }
+        };
         map.insert(
             task_id.clone(),
             DownloadProcessInfo {
-                pid,
-                cancelled: false,
-                output_files: Vec::new(),
-                download_dir: params.download_dir.clone(),
-                filepath_file: Some(filepath_file),
+                cancel_tx,
+                tree: tree.clone(),
                 clip_duration,
                 errors: Default::default(),
             },
         );
-    }
-
-    // 真正直接由 Rust 后端写入 SQLite 下载中状态
-    let _ =
-        crate::db::tasks::mark_task_downloading(&app.state::<crate::db::DatabaseState>(), &task_id);
-
-    let stdout = child.stdout.take().ok_or("err_capture_stdout")?;
-    let stderr = child.stderr.take().ok_or("err_capture_stderr")?;
-
-    // 读取 stdout（原始字节，lossy 解码以应对 Windows GBK 编码）
-    let stdout_reader =
-        spawn_output_reader(app.clone(), task_id.clone(), processes.clone(), stdout);
-    // 读取 stderr
-    let stderr_reader =
-        spawn_output_reader(app.clone(), task_id.clone(), processes.clone(), stderr);
-
-    // 等待进程完成并处理结果
-    spawn_completion_handler(
+        (child, tree, stdout, stderr, attempt)
+    };
+    let stdout_reader = spawn_output_reader(
         app.clone(),
-        task_id,
+        task_id.clone(),
+        attempt,
         processes.clone(),
-        child,
-        [stdout_reader, stderr_reader],
+        stdout,
+    );
+    let stderr_reader = spawn_output_reader(
+        app.clone(),
+        task_id.clone(),
+        attempt,
+        processes.clone(),
+        stderr,
     );
 
+    spawn_completion_handler(
+        app,
+        task_id,
+        attempt,
+        processes,
+        child,
+        tree,
+        cancel_rx,
+        manifest,
+        destination,
+        token,
+        [stdout_reader, stderr_reader],
+    );
     Ok(())
+}
+
+// --print-to-file uses yt-dlp output-template path expansion, not a raw path.
+fn manifest_template(path: &Path) -> Result<String, String> {
+    let path = path.to_str().ok_or("err_create_output_manifest")?;
+    if path.contains('$') {
+        return Err("err_create_output_manifest".into());
+    }
+    Ok(path.replace('%', "%%"))
 }

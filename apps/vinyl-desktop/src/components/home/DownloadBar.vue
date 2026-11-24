@@ -21,7 +21,7 @@ const emit = defineEmits<{
         </n-flex>
         <n-button type="primary" round :disabled="disabled" @click="emit('download')">
           <template #icon>
-            <n-icon>
+            <n-icon aria-hidden="true">
               <icon-mdi-download />
             </n-icon>
           </template>

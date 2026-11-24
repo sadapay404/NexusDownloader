@@ -101,9 +101,80 @@ pub fn split_command_line_args(input: &str) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
+/// Managed downloads must not take options that change the URL, selection, output,
+/// execution, or completion contract. Pass each accepted option as one argv value.
+pub fn parse_media_options(input: &str) -> Result<Vec<String>, String> {
+    let mut parsed = split_command_line_args(input)?.into_iter();
+    let mut args = Vec::new();
+    while let Some(arg) = parsed.next() {
+        let (option, inline) = arg
+            .split_once('=')
+            .map_or((arg.as_str(), None), |(name, value)| (name, Some(value)));
+        match option {
+            "--force-ipv4" | "--force-ipv6" | "--geo-bypass" if inline.is_none() => args.push(arg),
+            "--sleep-requests"
+            | "--sleep-interval"
+            | "--max-sleep-interval"
+            | "--sleep-subtitles"
+            | "--socket-timeout"
+            | "--retries"
+            | "--fragment-retries"
+            | "--extractor-retries"
+            | "--file-access-retries"
+            | "--retry-sleep"
+            | "--throttled-rate"
+            | "--extractor-args" => {
+                let value = inline
+                    .map(str::to_owned)
+                    .or_else(|| parsed.next())
+                    .filter(|value| !value.is_empty() && !value.starts_with('-'))
+                    .ok_or("err_invalid_custom_option_value")?;
+                args.push(format!("{option}={value}"));
+            }
+            _ => return Err(format!("err_unsupported_custom_option:{option}")),
+        }
+    }
+    Ok(args)
+}
+
+pub fn validate_media_url(value: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(value).map_err(|_| "err_invalid_media_url")?;
+    if matches!(parsed.scheme(), "http" | "https") && parsed.has_host() {
+        Ok(())
+    } else {
+        Err("err_invalid_media_url".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_arguments_cannot_change_format_or_fake_a_save() {
+        for input in [
+            "--simulate",
+            "--skip-download",
+            "--format=best",
+            "-o other",
+            "--print-to-file after_move:path marker",
+            "--config-locations file",
+            "--exec command",
+            "--",
+            "--sleep-interval --simulate",
+        ] {
+            assert!(parse_media_options(input).is_err(), "{input}");
+        }
+        assert_eq!(
+            parse_media_options("--sleep-requests 1 --retry-sleep=http:linear=1::2 --force-ipv4")
+                .unwrap(),
+            [
+                "--sleep-requests=1",
+                "--retry-sleep=http:linear=1::2",
+                "--force-ipv4"
+            ]
+        );
+    }
 
     #[test]
     fn selects_node_exclusively_and_preserves_windows_paths() {

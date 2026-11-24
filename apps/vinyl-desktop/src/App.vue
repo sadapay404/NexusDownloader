@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import IconMdiHome from "~icons/mdi/home";
@@ -9,12 +10,13 @@ import type { Component } from "vue";
 import { useSettingStore } from "@/stores/setting";
 import { useDownloadStore } from "@/stores/download";
 import { usePendingStore } from "@/stores/pending";
-import { localeEntries } from "@/locales";
 import { useExternalImports } from "@/composables/useExternalImports";
 import { useTrayManager } from "@/composables/useTrayManager";
 import { useAppBootstrap } from "@/composables/useAppBootstrap";
 
+const { t } = useI18n();
 const router = useRouter();
+const openSettings = () => router.push({ name: "settings" });
 const route = useRoute();
 const settingStore = useSettingStore();
 const downloadStore = useDownloadStore();
@@ -32,11 +34,6 @@ const navBadgeCounts = computed<Record<string, number>>(() => ({
       downloadTask.status === "postprocessing" ||
       downloadTask.status === "queued",
   ).length,
-}));
-
-const localeOptions = localeEntries.map((localeEntry) => ({
-  label: `${localeEntry.flag} ${localeEntry.label}`,
-  value: localeEntry.code,
 }));
 
 const currentRoute = computed(() => {
@@ -72,8 +69,12 @@ onMounted(async () => {
   appVersion.value = await getVersion().catch(() => "");
   try {
     await bootstrap();
+    void downloadStore.enableQueue();
     await setupExternalImportListeners();
     await setupTray();
+  } catch (error) {
+    console.error("Could not initialize desktop tools:", error);
+    window.$message.error(t("setup.bootstrapFailed"));
   } finally {
     // 引导失败也要显示窗口，否则应用只剩托盘图标、看不到界面
     if (settingStore.startMaximized) await currentAppWindow.maximize().catch(() => {});
@@ -88,13 +89,13 @@ onMounted(async () => {
     <SetupModal />
     <MigrationModal />
     <n-layout class="vinyl-app-shell" style="height: 100vh">
-      <n-layout-header bordered class="app-header">
+      <n-layout-header role="banner" bordered class="app-header">
         <div class="header-side">
           <RouterLink class="logo" :to="{ name: 'home' }" aria-label="NexusDownloader">
             <img src="/runout-wordmark.svg" alt="NexusDownloader" class="logo-img" />
           </RouterLink>
         </div>
-        <div class="header-nav">
+        <nav class="header-nav" :aria-label="$t('nav.navigation')">
           <n-badge
             v-for="item in navItems"
             :key="item.key"
@@ -115,7 +116,7 @@ onMounted(async () => {
               @click="router.push({ name: item.key })"
             >
               <template #icon>
-                <n-icon>
+                <n-icon aria-hidden="true">
                   <component :is="item.icon" />
                 </n-icon>
               </template>
@@ -124,48 +125,35 @@ onMounted(async () => {
               </span>
             </n-button>
           </n-badge>
-        </div>
+        </nav>
         <div class="header-side header-side-right">
           <n-button
-            :focusable="false"
             quaternary
             circle
             tag="a"
-            href="https://github.com/imsyy/yt-dlp-gui"
+            href="https://github.com/sadapay404/NexusDownloader"
+            :aria-label="$t('settings.repository')"
+            :title="$t('settings.repository')"
+            rel="noopener noreferrer"
             target="_blank"
           >
             <template #icon>
-              <n-icon>
+              <n-icon aria-hidden="true">
                 <icon-mdi-github />
               </n-icon>
             </template>
           </n-button>
-          <n-popselect
-            v-model:value="settingStore.locale"
-            :options="localeOptions"
-            trigger="click"
-            scrollable
-          >
-            <n-button :focusable="false" quaternary circle>
-              <template #icon>
-                <n-icon>
-                  <icon-mdi-translate />
-                </n-icon>
-              </template>
-            </n-button>
-          </n-popselect>
           <n-button
             :title="$t('settings.title')"
             :aria-label="$t('settings.title')"
             :type="currentRoute === 'settings' ? 'primary' : 'default'"
             :secondary="currentRoute === 'settings'"
             :quaternary="currentRoute !== 'settings'"
-            :focusable="false"
             circle
-            @click="router.push({ name: 'settings' })"
+            @click="openSettings"
           >
             <template #icon>
-              <n-icon>
+              <n-icon aria-hidden="true">
                 <icon-mdi-cog />
               </n-icon>
             </template>
@@ -178,13 +166,13 @@ onMounted(async () => {
         content-style="display: flex; flex-direction: column; height: 100%; overflow: hidden;"
         :native-scrollbar="false"
       >
-        <div class="app-route-view">
+        <main class="app-route-view">
           <router-view v-slot="{ Component: RouteComponent }">
             <Transition name="fade-slide" mode="out-in">
               <component :is="RouteComponent" />
             </Transition>
           </router-view>
-        </div>
+        </main>
       </n-layout>
       <AppStatusBar :title="appVersion ? `NexusDownloader v${appVersion}` : undefined" />
     </n-layout>

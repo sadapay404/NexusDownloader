@@ -1,24 +1,24 @@
 import { defineStore } from "pinia";
 import { useSettingStore } from "@/stores/setting";
 import { getCodecKey } from "@/utils/formats";
+import { hasAudio, nativeTier, videoFormatsForMode } from "@/utils/vinylSelection";
+import { serializeReview, deserializeReview } from "@/utils/reviewDraft";
 import type { FetchedVideoData, PendingItem, VideoFormat } from "@/types";
 
 const generateId = () => `pd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-const selectVideoFormat = (
+export const selectVideoFormat = (
   formats: VideoFormat[],
   preferredCodec: string,
-  maxHeight?: number,
-): string => {
-  const withinHeight = maxHeight
-    ? formats.filter((format) => format.height != null && format.height <= maxHeight)
+  maxTier?: number,
+): VideoFormat | undefined => {
+  const candidates = maxTier
+    ? formats.filter((format) => {
+        const tier = nativeTier(format);
+        return tier !== null && tier <= maxTier;
+      })
     : formats;
-  const candidates = withinHeight.length ? withinHeight : formats;
-  return (
-    candidates.find((format) => getCodecKey(format.vcodec) === preferredCodec)?.format_id ??
-    candidates[0]?.format_id ??
-    ""
-  );
+  return candidates.find((format) => getCodecKey(format.vcodec) === preferredCodec) ?? candidates[0];
 };
 
 /**
@@ -30,7 +30,14 @@ const selectVideoFormat = (
  */
 export const createPendingItem = (data: FetchedVideoData, quick = false): PendingItem => {
   const settingStore = useSettingStore();
-  const maxHeight = quick ? settingStore.quickMaxHeight : undefined;
+  const mode = quick ? settingStore.quickDownloadMode : settingStore.defaultDownloadMode;
+  const noMerge = quick ? settingStore.quickNoMerge : settingStore.defaultNoMerge;
+  const formats = videoFormatsForMode(data.videoFormats, mode);
+  const candidates = quick && mode === "default" && !noMerge && !data.audioFormats.length
+    ? formats.filter(hasAudio) : formats;
+  const video = data.isPlaylist || mode === "audio" ? undefined : selectVideoFormat(
+    candidates, settingStore.preferredVideoCodec, quick ? settingStore.quickMaxHeight : undefined,
+  );
   return {
     ...data,
     id: generateId(),
@@ -38,18 +45,12 @@ export const createPendingItem = (data: FetchedVideoData, quick = false): Pendin
     selectedPlaylistItems: data.isPlaylist
       ? data.playlistEntries.map((entry, i) => entry.playlist_index ?? i + 1)
       : [],
-    downloadMode: quick ? settingStore.quickDownloadMode : settingStore.defaultDownloadMode,
-    selectedVideoFormat: selectVideoFormat(
-      data.videoFormats,
-      settingStore.preferredVideoCodec,
-      maxHeight,
-    ),
-    selectedAudioFormat:
-      data.audioFormats.find(
-        (format) => getCodecKey(format.acodec) === settingStore.preferredAudioCodec,
-      )?.format_id ??
-      data.audioFormats[0]?.format_id ??
-      "",
+    downloadMode: mode,
+    selectedVideoFormat: video?.format_id ?? "",
+    selectedAudioFormat: data.isPlaylist || (mode === "default" && hasAudio(video) &&
+        !(quick ? false : settingStore.defaultExtractAudio)) ? "" :
+      data.audioFormats.find((format) => getCodecKey(format.acodec) === settingStore.preferredAudioCodec)?.format_id ??
+      data.audioFormats[0]?.format_id ?? "",
     startTime: null,
     endTime: null,
     forceKeyframesAtCuts: false,
@@ -66,7 +67,7 @@ export const createPendingItem = (data: FetchedVideoData, quick = false): Pendin
       : settingStore.defaultSponsorblockRemove,
     extractAudio: quick ? false : settingStore.defaultExtractAudio,
     audioConvertFormat: quick ? "" : settingStore.defaultAudioConvertFormat,
-    noMerge: quick ? settingStore.quickNoMerge : settingStore.defaultNoMerge,
+    noMerge,
     recodeFormat: quick ? settingStore.quickRecodeFormat : settingStore.defaultRecodeFormat,
     remuxFormat: quick ? settingStore.quickRemuxFormat : settingStore.defaultRemuxFormat,
     limitRate: quick ? settingStore.quickLimitRate : settingStore.defaultLimitRate,
@@ -130,8 +131,6 @@ export const usePendingStore = defineStore("pending", () => {
     const item = items.value.find((i) => i.id === id);
     if (!item) return;
     const wasPlaylist = item.isPlaylist;
-    const selectedVideo = item.selectedVideoFormat;
-    const selectedAudio = item.selectedAudioFormat.split("+");
     item.url = data.url;
     item.videoInfo = data.videoInfo;
     item.videoFormats = data.videoFormats;
@@ -144,17 +143,9 @@ export const usePendingStore = defineStore("pending", () => {
         ? item.selectedPlaylistItems.filter((index) => indices.includes(index))
         : indices
       : [];
-    item.selectedVideoFormat = data.videoFormats.some(
-      (format) => format.format_id === selectedVideo,
-    )
-      ? selectedVideo
-      : (data.videoFormats[0]?.format_id ?? "");
-    const retainedAudio = selectedAudio.filter((id) =>
-      data.audioFormats.some((format) => format.format_id === id),
-    );
-    item.selectedAudioFormat = retainedAudio.length
-      ? retainedAudio.join("+")
-      : (data.audioFormats[0]?.format_id ?? "");
+    // Keep explicit IDs even if the refreshed source no longer offers them.
+    // The review shows a warning and requires another explicit choice.
+
   };
 
   /**
@@ -174,4 +165,10 @@ export const usePendingStore = defineStore("pending", () => {
     refresh,
     clear,
   };
+}, {
+  persist: {
+    key: "vinyl-review-v1",
+    pick: ["items", "activeId"],
+    serializer: { serialize: serializeReview, deserialize: deserializeReview },
+  },
 });

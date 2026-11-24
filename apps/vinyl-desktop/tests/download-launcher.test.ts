@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useDownloadLauncher } from "@/composables/useDownloadLauncher";
-import type { PendingItem } from "@/types";
+import type { PendingItem, VideoFormat } from "@/types";
 
 const { status, addTask, tasks } = vi.hoisted(() => ({
   status: { showFfmpegSetupModal: false },
@@ -9,6 +9,7 @@ const { status, addTask, tasks } = vi.hoisted(() => ({
   tasks: [] as { id: string; status: string; error?: string }[],
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/locales", () => ({ default: { global: { t: (key: string) => key } } }));
 vi.mock("vue-i18n", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock("@/stores/setting", () => ({
   useSettingStore: () => ({
@@ -44,6 +45,13 @@ const processingOptions: Partial<PendingItem>[] = [
   { downloadMode: "video", remuxFormat: "mkv" },
 ];
 
+const format = (id: string, video: boolean, audio: boolean): VideoFormat => ({
+  format_id: id, ext: "mp4", height: video ? 1080 : null, width: video ? 1920 : null,
+  resolution: video ? "1080p" : "audio only", fps: video ? 30 : null,
+  vcodec: video ? "h264" : "none", acodec: audio ? "aac" : "none", filesize: null,
+  filesize_approx: null, format_note: "", tbr: null, abr: null,
+});
+
 const createItem = (options: Partial<PendingItem> = {}): PendingItem => ({
   id: "test",
   createdAt: 0,
@@ -60,8 +68,8 @@ const createItem = (options: Partial<PendingItem> = {}): PendingItem => ({
     subtitles: {},
     automatic_captions: {},
   },
-  videoFormats: [],
-  audioFormats: [],
+  videoFormats: [format("137", true, false)],
+  audioFormats: ["140", "en", "es", "audio-only"].map((id) => format(id, false, true)),
   isPlaylist: false,
   playlistEntries: [],
   selectedPlaylistItems: [],
@@ -135,7 +143,7 @@ test("downloads an existing combined file without requiring FFmpeg", async () =>
 });
 
 test("downloads audio-only sources in default mode without requiring FFmpeg", async () => {
-  const item = createItem({ selectedAudioFormat: "audio-only" });
+  const item = createItem({ selectedAudioFormat: "audio-only", videoFormats: [] });
   expect(await useDownloadLauncher().launchDownload(item)).toBe("started");
   expect(invoke).not.toHaveBeenCalledWith("get_ffmpeg_status");
   expect(addTask).toHaveBeenCalledWith(
@@ -210,4 +218,24 @@ test("a store startup failure remains available for diagnostics and is shown to 
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+
+test("rejects video without an available soundtrack instead of silently choosing a lower format", async () => {
+  const warning = vi.fn();
+  vi.stubGlobal("window", { $message: { warning } });
+  try {
+    const item = createItem({
+      selectedVideoFormat: "137", videoFormats: [format("137", true, false), format("mux-480", true, true)],
+      audioFormats: [],
+    });
+    expect(await useDownloadLauncher().launchDownload(item)).toBe("failed");
+    expect(warning).toHaveBeenCalledWith("detail.noAudioForFormat");
+    expect(addTask).not.toHaveBeenCalled();
+    item.selectedVideoFormat = "mux-480";
+    expect(await useDownloadLauncher().launchDownload(item)).toBe("started");
+    expect(addTask).toHaveBeenCalledWith(expect.objectContaining({
+      params: expect.objectContaining({ videoFormat: "mux-480", videoHasAudio: true }),
+    }), undefined);
+  } finally { vi.unstubAllGlobals(); }
 });

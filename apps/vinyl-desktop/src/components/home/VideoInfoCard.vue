@@ -61,7 +61,7 @@ watch(thumbnailSrc, () => {
         <n-flex align="center" :size="8" style="margin-bottom: 4px">
           <n-tag v-if="isPlaylist" size="small" round :bordered="false" type="warning">
             <template #icon>
-              <n-icon size="12"><icon-mdi-playlist-play /></n-icon>
+              <n-icon aria-hidden="true" size="12"><icon-mdi-playlist-play /></n-icon>
             </template>
             {{ $t("detail.playlistTag", { n: playlistCount }) }}
           </n-tag>

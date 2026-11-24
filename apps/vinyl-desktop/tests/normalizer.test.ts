@@ -81,7 +81,7 @@ describe("normalizer utils", () => {
     const normalized = normalizeVideoFormat(format);
 
     expect(normalized.formatId).toBe("299");
-    expect(normalized.resolutionLabel).toBe("1080p");
+    expect(normalized.resolutionLabel).toBe("1080p (1920×1080)");
     expect(normalized.fpsLabel).toBe("60fps");
     expect(normalized.codec).toBe("AV1");
     expect(normalized.dynamicRange).toBe("HDR");

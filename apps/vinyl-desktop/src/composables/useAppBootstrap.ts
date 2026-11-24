@@ -32,6 +32,11 @@ export const useAppBootstrap = () => {
   const applyYtdlpChannel = (): Promise<unknown> =>
     invoke("set_ytdlp_channel", { channel: settingStore.ytdlpChannel }).catch(() => {});
 
+  const applyExtractorSettings = () => invoke("set_youtube_extractor_args", {
+    poToken: settingStore.youtubePoToken,
+    visitorData: settingStore.youtubeVisitorData,
+  });
+
   /**
    * 执行完整的应用启动引导任务
    *
@@ -60,6 +65,8 @@ export const useAppBootstrap = () => {
     );
     await invoke("set_js_runtime", { runtime: settingStore.jsRuntime });
     await applyYtdlpChannel();
+    watch(() => [settingStore.youtubePoToken, settingStore.youtubeVisitorData], applyExtractorSettings);
+    await applyExtractorSettings();
   };
 
   return {

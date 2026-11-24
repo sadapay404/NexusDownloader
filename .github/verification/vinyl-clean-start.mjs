@@ -69,7 +69,7 @@ async function check() {
     } });
     await page.evaluate((directory) => {
       const setting = JSON.parse(localStorage.getItem("setting") ?? "{}");
-      localStorage.setItem("setting", JSON.stringify({ ...setting, themeMode: "light", downloadDir: directory }));
+      localStorage.setItem("setting", JSON.stringify({ ...setting, themeMode: "light", downloadDir: directory, youtubePoToken: null, youtubeVisitorData: null }));
     }, saved);
     await page.reload();
     await expect(page.getByRole("textbox", { name: "Video link" })).toBeVisible();
@@ -128,7 +128,12 @@ async function check() {
   await link.fill(url);
   await page.getByRole("button", { name: "Inspect link", exact: true }).click();
   await page.getByRole("button", { name: "Download Now", exact: true }).click({ timeout: 30000 });
-  await expect(page.getByText("Saved to disk", { exact: true })).toBeVisible({ timeout: 30000 });
+  const waitForSave = (target) => expect.poll(async () => {
+    const task = (await invoke("db_get_tasks")).find(t => t.url === target && t.id !== "prior-save");
+    if (task?.status === "error") throw new Error(`Save failed: ${task.error}`);
+    return task?.status;
+  }, { timeout: 30000 }).toBe("completed");
+  await waitForSave(url);
   const files = await readdir(saved);
   assert.equal(files.length, 1);
   assert.deepEqual(await readFile(join(saved, files[0])), bytes);
@@ -136,22 +141,31 @@ async function check() {
   stage = "merging real separate audio and video with managed FFmpeg";
   const input = join(work, "media");
   await mkdir(input);
-  const converted = spawnSync(ffmpeg, ["-v", "error", "-i", fixture, "-map", "0:v", "-map", "0:a", "-c", "copy",
-    "-f", "dash", "-adaptation_sets", "id=0,streams=v id=1,streams=a", join(input, "multi.mpd")], { encoding: "utf8", timeout: 20000, windowsHide: true });
-  assert.equal(converted.status, 0, converted.stderr || describe(converted.error));
-  for (const name of await readdir(input)) {
-    served.set(`/dash/${name}`, [name.endsWith(".mpd") ? "application/dash+xml" : "video/iso.segment", await readFile(join(input, name))]);
+  for (const [track, file, type] of [["0:v", "video.mp4", "video/mp4"], ["0:a", "audio.m4a", "audio/mp4"]]) {
+    const path = join(input, file);
+    const converted = spawnSync(ffmpeg, ["-v", "error", "-i", fixture, "-map", track, "-c", "copy", path],
+      { encoding: "utf8", timeout: 20000, windowsHide: true });
+    assert.equal(converted.status, 0, converted.stderr || describe(converted.error));
+    served.set(`/dash/${file}`, [type, await readFile(path)]);
   }
+  // Single-file DASH renditions deliberately avoid platform-specific segment names.
+  served.set("/dash/multi.mpd", ["application/dash+xml", Buffer.from(`<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT1.2S" minBufferTime="PT0.1S">
+  <Period start="PT0S" duration="PT1.2S">
+    <AdaptationSet contentType="video" mimeType="video/mp4">
+      <Representation id="video" codecs="avc1.64001e" bandwidth="11000" width="854" height="480"><BaseURL>video.mp4</BaseURL></Representation>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio" mimeType="audio/mp4">
+      <Representation id="audio" codecs="mp4a.40.2" bandwidth="50000" audioSamplingRate="44100"><BaseURL>audio.m4a</BaseURL></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`)]);
   await page.getByRole("link", { name: "NexusDownloader", exact: true }).click();
   const streamUrl = `${new URL(url).origin}/dash/multi.mpd`;
   await link.fill(streamUrl);
   await page.getByRole("button", { name: "Inspect link", exact: true }).click();
   await page.getByRole("button", { name: "Download Now", exact: true }).click({ timeout: 30000 });
-  await expect.poll(async () => {
-    const task = (await invoke("db_get_tasks")).find(t => t.url === streamUrl);
-    if (task?.status === "error") throw new Error(`Separate-stream save failed: ${task.error}`);
-    return task?.status;
-  }, { timeout: 35000 }).toBe("completed");
+  await waitForSave(streamUrl);
   const merged = (await invoke("db_get_tasks")).find(t => t.url === streamUrl);
   const probe = spawnSync(join(dirname(ffmpeg), "ffprobe.exe"), ["-v", "error", "-show_entries", "stream=codec_type,width,height",
     "-of", "json", merged.outputFile], { encoding: "utf8", timeout: 10000, windowsHide: true });

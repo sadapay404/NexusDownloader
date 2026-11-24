@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 
 use super::install::{install_executables, make_executable, stage_in, staged_path};
-use super::release_asset::resolve_release_assets;
+use super::release_asset::{new_managed_install, resolve_release_assets};
 use super::support::{
     build_tool_status, download_to_file_with_progress, emit_tool_progress, verify_release_version,
 };
@@ -60,7 +60,12 @@ async fn download_ytdlp_impl(app: AppHandle, operation: &str) -> Result<(), Stri
     let stage = stage_in(ytdlp_path.parent().ok_or("err_invalid_executable_path")?)?;
     let temp_path = staged_path(&stage, &ytdlp_path)?;
     let (repository, asset_name) = utils::ytdlp_release_asset();
-    let (tag, assets) = resolve_release_assets(repository, &[asset_name]).await?;
+    let (tag, assets) = resolve_release_assets(
+        repository,
+        &[asset_name],
+        new_managed_install(operation, &[&ytdlp_path]),
+    )
+    .await?;
 
     download_to_file_with_progress(
         &app, "yt-dlp", operation, &assets[0], &temp_path, 0.0, 100.0,

@@ -1,7 +1,7 @@
 //! Resolve a specific GitHub release once, then check its asset before execution.
 
 use serde::Deserialize;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 const RELEASE_ERROR: &str = "err_tool_release";
 const INTEGRITY_ERROR: &str = "err_tool_integrity";
@@ -81,10 +81,43 @@ impl Release {
     }
 }
 
+/// Use the audited bootstrap snapshot only for a new managed Windows x64 install.
+/// A reinstall or update must use current release metadata rather than downgrade.
+pub(super) fn new_managed_install(operation: &str, targets: &[&Path]) -> bool {
+    operation == "install"
+        && !targets.is_empty()
+        && targets.iter().all(|target| {
+            matches!(
+                std::fs::symlink_metadata(target),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+            )
+        })
+}
+
+fn windows_bootstrap_release(
+    repository: &str,
+    names: &[&str],
+) -> Result<Option<(String, Vec<VerifiedAsset>)>, String> {
+    let mut pinned: std::collections::HashMap<String, Release> =
+        serde_json::from_str(include_str!("../../../windows/bootstrap-releases.json"))
+            .map_err(|_| RELEASE_ERROR)?;
+    let Some(release) = pinned.remove(repository) else {
+        return Ok(None);
+    };
+    let assets = release.resolve(repository, names)?;
+    Ok(Some((release.tag_name, assets)))
+}
+
 pub(super) async fn resolve_release_assets(
     repository: &str,
     names: &[&str],
+    new_install: bool,
 ) -> Result<(String, Vec<VerifiedAsset>), String> {
+    if new_install && cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        if let Some(pinned) = windows_bootstrap_release(repository, names)? {
+            return Ok(pinned);
+        }
+    }
     let client = reqwest::Client::builder()
         .https_only(true)
         .timeout(Duration::from_secs(30))
@@ -165,6 +198,51 @@ mod tests {
         assert!(release.resolve("other/tool", &["tool.zip"]).is_err());
         release.assets[0].digest = None;
         assert!(release.resolve("test/tool", &["tool.zip"]).is_err());
+    }
+
+    #[test]
+    fn bootstrap_is_pinned_to_exact_official_assets_and_never_to_a_different_channel() {
+        let (tag, assets) = windows_bootstrap_release("yt-dlp/yt-dlp", &["yt-dlp.exe"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            assets[0].url,
+            format!("https://github.com/yt-dlp/yt-dlp/releases/download/{tag}/yt-dlp.exe")
+        );
+        assert!(assets[0]
+            .check_integrity(assets[0].size, &assets[0].digest)
+            .is_ok());
+        assert!(
+            windows_bootstrap_release("yt-dlp/yt-dlp-nightly-builds", &["yt-dlp.exe"])
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            windows_bootstrap_release("denoland/deno", &["deno-x86_64-pc-windows-msvc.zip"])
+                .unwrap()
+                .is_some()
+        );
+        assert!(windows_bootstrap_release(
+            "eugeneware/ffmpeg-static",
+            &["ffmpeg-win32-x64", "ffprobe-win32-x64"]
+        )
+        .unwrap()
+        .is_some());
+        assert!(
+            windows_bootstrap_release("eugeneware/ffmpeg-static", &["ffmpeg-linux-x64"]).is_err()
+        );
+    }
+
+    #[test]
+    fn existing_or_partially_installed_tools_do_not_use_the_bootstrap_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = dir.path().join("ffmpeg.exe");
+        let ffprobe = dir.path().join("ffprobe.exe");
+        let paths = [ffmpeg.as_path(), ffprobe.as_path()];
+        assert!(new_managed_install("install", &paths));
+        assert!(!new_managed_install("update", &paths));
+        std::fs::write(&ffmpeg, b"existing version").unwrap();
+        assert!(!new_managed_install("install", &paths));
     }
 
     #[test]

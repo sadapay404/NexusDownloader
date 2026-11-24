@@ -4,7 +4,7 @@ use crate::utils;
 use tauri::AppHandle;
 
 use super::install::{install_executables, make_executable, stage_in, staged_path};
-use super::release_asset::resolve_release_assets;
+use super::release_asset::{new_managed_install, resolve_release_assets};
 use super::support::{
     build_tool_status, download_to_file_with_progress, emit_tool_progress, verify_executable,
     verify_release_version,
@@ -34,9 +34,6 @@ async fn download_ffmpeg_impl(app: AppHandle, operation: &str) -> Result<(), Str
         .map_err(|_| "err_tool_operation_busy")?;
     let dir = utils::get_managed_ffmpeg_dir(&app)?;
     let [ffmpeg_asset, ffprobe_asset] = utils::ffmpeg_release_assets();
-    let (tag, assets) =
-        resolve_release_assets("eugeneware/ffmpeg-static", &[&ffmpeg_asset, &ffprobe_asset])
-            .await?;
     let ffmpeg_name = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
     } else {
@@ -48,6 +45,12 @@ async fn download_ffmpeg_impl(app: AppHandle, operation: &str) -> Result<(), Str
         "ffprobe"
     };
     let targets = [dir.join(ffmpeg_name), dir.join(ffprobe_name)];
+    let (tag, assets) = resolve_release_assets(
+        "eugeneware/ffmpeg-static",
+        &[&ffmpeg_asset, &ffprobe_asset],
+        new_managed_install(operation, &[&targets[0], &targets[1]]),
+    )
+    .await?;
     let stage = stage_in(&dir)?;
     for (index, (asset, target)) in assets.iter().zip(targets.iter()).enumerate() {
         let temp = staged_path(&stage, target)?;

@@ -52,7 +52,7 @@ try {
   await page.getByRole("button", { name: "Inspect link", exact: true }).click();
   await expect(page.getByText("yt-dlp Required", { exact: true })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Go to Settings", exact: true }).click();
-  await expect(page.getByText("Tool Manager", { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("Required Setup", { exact: true })).toBeVisible({ timeout: 15000 });
   stage = "running the real managed installs";
   const tools = ["ytdlp", "deno", "ffmpeg"];
   const status = await Promise.allSettled(tools.map(tool => invoke(`download_${tool}`)));

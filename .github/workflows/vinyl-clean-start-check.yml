@@ -3,7 +3,9 @@ name: Check delivered Vinyl Setup from a clean Windows profile
 on:
   push:
     branches: [arena/ff958846-nexusdownloader]
-    paths: ['.github/workflows/vinyl-clean-start-check.yml']
+    paths:
+      - '.github/workflows/vinyl-clean-start-check.yml'
+      - '.github/verification/*vinyl-clean-start.*'
 
 permissions:
   contents: read

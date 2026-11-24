@@ -28,8 +28,6 @@
       "Make sure to set a download directory before downloading",
       "Installing Deno runtime is recommended for YouTube to get full format list",
       "Use keyboard Up/Down keys to browse parse history"
-    ],
-    "retryLink": "Retry link",
-    "quickQualityUnavailable": "Quick Download cannot honor the {tier}p maximum for this link. Inspect the available formats to choose manually."
+    ]
   }
 }

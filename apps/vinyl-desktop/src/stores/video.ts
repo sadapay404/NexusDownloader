@@ -34,11 +34,6 @@ const aggregateSubtitleMap = (
  */
 export const useVideoStore = defineStore("video", () => {
   const fetching = ref(false);
-  // Keep the user's intake through the Settings/first-run detour, without
-  // storing clipboard contents or automatically retrying in the background.
-  const draftUrl = ref("");
-  const batchDraft = ref("");
-  const needsLinkRetry = ref(false);
 
   /**
    * 根据当前全局设置解析并获取有效的 Cookie 传入参数
@@ -120,11 +115,14 @@ export const useVideoStore = defineStore("video", () => {
 
       const formats: VideoFormat[] = videoInfo.formats || [];
 
-      // Presentation decides whether sound is built in or can be added. A
-      // combined format is still a valid, exact video quality choice.
-      const videoFormats = formats
-        .filter((f) => f.vcodec && f.vcodec !== "none")
+      const videoOnlyFormats = formats
+        .filter((f) => f.vcodec && f.vcodec !== "none" && (!f.acodec || f.acodec === "none"))
         .sort(compareVideoFormats);
+      const combinedFormats = formats
+        .filter((f) => f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none")
+        .sort(compareVideoFormats);
+      // 部分站点只提供已封装音视频的单文件格式；没有纯视频流时不能把这些格式全部过滤掉。
+      const videoFormats = videoOnlyFormats.length ? videoOnlyFormats : combinedFormats;
       const audioFormats = formats
         .filter((f) => f.acodec && f.acodec !== "none" && (!f.vcodec || f.vcodec === "none"))
         .sort(compareAudioFormats);
@@ -171,7 +169,7 @@ export const useVideoStore = defineStore("video", () => {
   };
 
   return {
-    fetching, draftUrl, batchDraft, needsLinkRetry,
+    fetching,
     fetchVideoInfo,
     getCookieArgs,
   };

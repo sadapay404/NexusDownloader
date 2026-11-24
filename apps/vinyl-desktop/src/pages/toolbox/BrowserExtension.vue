@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl as openExternal } from "@tauri-apps/plugin-opener";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import IconMdiDownloadOutline from "~icons/mdi/download-outline";
 import IconMdiCursorDefaultClick from "~icons/mdi/cursor-default-click";
 import IconMdiOpenInNew from "~icons/mdi/open-in-new";

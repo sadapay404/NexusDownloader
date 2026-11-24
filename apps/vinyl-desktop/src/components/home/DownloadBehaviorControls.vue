@@ -14,7 +14,7 @@ defineEmits<{ settings: [] }>();
           <n-tooltip>
             <template #trigger>
               <span class="behavior-label">
-                <n-icon aria-hidden="true" size="15"><icon-mdi-playlist-edit /></n-icon>
+                <n-icon size="15"><icon-mdi-playlist-edit /></n-icon>
                 {{ $t("vinyl.reviewFormats") }}
               </span>
             </template>
@@ -27,7 +27,7 @@ defineEmits<{ settings: [] }>();
           <n-tooltip>
             <template #trigger>
               <span class="behavior-label">
-                <n-icon aria-hidden="true" size="15"><icon-mdi-lightning-bolt /></n-icon>
+                <n-icon size="15"><icon-mdi-lightning-bolt /></n-icon>
                 {{ $t("vinyl.quickDownload") }}
               </span>
             </template>
@@ -50,7 +50,7 @@ defineEmits<{ settings: [] }>();
               @click="$emit('settings')"
             >
               <template #icon>
-                <n-icon aria-hidden="true" size="16"><icon-mdi-cog-outline /></n-icon>
+                <n-icon size="16"><icon-mdi-cog-outline /></n-icon>
               </template>
             </n-button>
           </template>

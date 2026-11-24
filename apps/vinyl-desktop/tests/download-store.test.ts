@@ -79,13 +79,12 @@ const deferred = <T = void>() => {
   return { promise, resolve, reject };
 };
 
-const readyStore = async (enable = true) => {
+const readyStore = async () => {
   const store = useDownloadStore();
   await vi.waitFor(() => {
     expect(store.loaded).toBe(true);
     expect(handlers.has("download-error")).toBe(true);
   });
-  if (enable) await store.enableQueue();
   return store;
 };
 
@@ -93,7 +92,7 @@ const starts = () =>
   vi.mocked(invoke).mock.calls.filter(([command]) => command === "start_download");
 
 const complete = (id: string) =>
-  handlers.get("download-complete")!({ payload: { id, attempt: useDownloadStore().tasks.find((task) => task.id === id)?.createdAt, outputFile: `${id}.mp4`, fileSizeBytes: 1024 } });
+  handlers.get("download-complete")!({ payload: { id, outputFile: `${id}.mp4` } });
 
 test("completed downloads retain and persist their bounded diagnostic logs", async () => {
   const store = useDownloadStore();
@@ -115,21 +114,21 @@ test("completed downloads retain and persist their bounded diagnostic logs", asy
     params: normalizeTaskParams(),
   });
   for (let index = 0; index < 600; index += 1) {
-    handlers.get("download-log")!({ payload: { id: "test", attempt: 0, line: `line ${index}` } });
+    handlers.get("download-log")!({ payload: { id: "test", line: `line ${index}` } });
   }
-  handlers.get("download-complete")!({ payload: { id: "test", attempt: 0, outputFile: "video.mp4", fileSizeBytes: 1024 } });
+  handlers.get("download-complete")!({ payload: { id: "test", outputFile: "video.mp4" } });
   const task = store.tasks[0];
   expect(task.status).toBe("completed");
   expect(task.logs).toHaveLength(MAX_TASK_LOGS);
   expect(task.logs[task.logs.length - 1]).toBe("line 599");
-  expect(invoke).toHaveBeenCalledWith("db_upsert_task", { task: expect.objectContaining({ status: "completed", logs: task.logs }) });
+  expect(invoke).toHaveBeenCalledWith("db_upsert_task", { task });
 });
 
 test("restored queues fill every available slot and resume after a completion", async () => {
   mockState.settings.maxConcurrent = 2;
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "db_get_tasks"
-      ? [createTask("third"), createTask("second"), createTask("first")]
+      ? [createTask("first"), createTask("second"), createTask("third")]
       : undefined,
   );
   const store = await readyStore();
@@ -146,7 +145,7 @@ test("a failed start keeps its diagnostics and does not stall the remaining queu
   mockState.settings.maxConcurrent = 2;
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "db_get_tasks") {
-      return [createTask("third"), createTask("second"), createTask("broken")];
+      return [createTask("broken"), createTask("second"), createTask("third")];
     }
     if (
       command === "start_download" &&
@@ -157,7 +156,7 @@ test("a failed start keeps its diagnostics and does not stall the remaining queu
   });
   const store = await readyStore();
   await vi.waitFor(() => expect(starts()).toHaveLength(3));
-  expect(store.tasks.find((task) => task.id === "broken")).toMatchObject({ status: "error", error: "cannot spawn yt-dlp" });
+  expect(store.tasks[0]).toMatchObject({ status: "error", error: "cannot spawn yt-dlp" });
   expect(store.activeCount).toBe(2);
   expect(invoke).toHaveBeenCalledWith(
     "db_upsert_task",
@@ -227,11 +226,12 @@ test("cancelling during startup waits for the process and keeps its slot reserve
   const addingSecond = store.addTask(createTask("second"));
   expect(invoke).not.toHaveBeenCalledWith("cancel_download", expect.anything());
   expect(store.activeCount).toBe(1);
-  expect(store.tasks.find((task) => task.id === "first")?.status).toBe("downloading");
+  complete("first");
+  expect(store.tasks.find((task) => task.id === "first")?.status).toBe("cancelled");
 
   starting.resolve();
   await vi.waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith("cancel_download", { id: "first" }),
+    expect(invoke).toHaveBeenCalledWith("cancel_download", { id: "first", deleteFiles: false }),
   );
   expect(starts()).toHaveLength(1);
   expect(store.activeCount).toBe(1);
@@ -242,7 +242,7 @@ test("cancelling during startup waits for the process and keeps its slot reserve
   expect(store.tasks.find((task) => task.id === "first")?.status).toBe("cancelled");
 });
 
-test("a startup rejection retains the real error while a cancellation is waiting", async () => {
+test("a startup rejection cannot turn a cancelled task back into an error", async () => {
   const store = await readyStore();
   const starting = deferred();
   vi.mocked(invoke).mockImplementation(async (command) => {
@@ -253,45 +253,45 @@ test("a startup rejection retains the real error while a cancellation is waiting
   const cancelled = store.cancelTask("first");
   starting.reject(new Error("FFmpeg unavailable"));
   await Promise.all([adding, cancelled]);
-  expect(store.tasks[0].status).toBe("error");
-  expect(store.tasks[0].error).toBe("FFmpeg unavailable");
+  expect(store.tasks[0].status).toBe("cancelled");
+  expect(store.tasks[0].error).toBeUndefined();
 });
 
 test("retries are deduplicated and cancellation during their persistence prevents startup", async () => {
   const store = await readyStore();
   store.tasks.push(createTask("failed", "error"));
-  const saving = deferred();
+  const deleting = deferred();
   vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "db_upsert_task") await saving.promise;
+    if (command === "db_delete_task") await deleting.promise;
   });
   const retrying = store.retryTask("failed");
-  expect(await store.retryTask("failed")).toBe(false);
-  const cancelling = store.cancelTask("failed");
-  expect(store.tasks[0].status).toBe("error");
-  expect(invoke).not.toHaveBeenCalledWith("db_delete_task", expect.anything());
-  saving.resolve();
+  const replacementId = store.tasks[0].id;
+  await store.retryTask("failed");
+  const cancelling = store.cancelTask(replacementId);
+  await store.retryTask(replacementId);
+  expect(
+    vi.mocked(invoke).mock.calls.filter(([command]) => command === "db_delete_task"),
+  ).toHaveLength(1);
+  deleting.resolve();
   await Promise.all([retrying, cancelling]);
   expect(store.tasks).toHaveLength(1);
   expect(store.tasks[0].status).toBe("cancelled");
   expect(starts()).toHaveLength(0);
 });
 
-test("preparing replacements are kept out of the queue until their row is saved", async () => {
+test("preparing replacements are kept out of the queue until their new row is saved", async () => {
   const store = await readyStore();
   await store.addTask(createTask("preparing", "preparing"));
-  const saving = deferred();
+  const deleting = deferred();
   vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "db_upsert_task") await saving.promise;
+    if (command === "db_delete_task") await deleting.promise;
   });
   const replacing = store.addTask(createTask("ready"), "preparing");
-  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("db_upsert_task", {
-    task: expect.objectContaining({ id: "preparing", status: "queued" }),
-  }));
-  expect(store.tasks[0].status).toBe("preparing");
+  await vi.waitFor(() => expect(store.tasks[0].id).toBe("ready"));
   mockState.settings.maxConcurrent = 4;
   await nextTick();
   expect(starts()).toHaveLength(0);
-  saving.resolve();
+  deleting.resolve();
   expect(await replacing).toBe("started");
   expect(store.tasks).toHaveLength(1);
   expect(starts()).toHaveLength(1);
@@ -328,20 +328,20 @@ test("re-downloading preserves completed history and sends its clone through the
   expect(starts()).toHaveLength(1);
 });
 
-test("clearing cancelled tasks does not remove an unconfirmed cancellation", async () => {
+test("clearing cancelled tasks waits for in-flight startup and cannot recreate their rows", async () => {
   const store = await readyStore();
-  const stopping = deferred();
+  const starting = deferred();
   vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "cancel_download") await stopping.promise;
+    if (command === "start_download") await starting.promise;
   });
-  await store.addTask(createTask("clear"));
+  const adding = store.addTask(createTask("clear"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(1));
   const cancelling = store.cancelTask("clear");
-  await store.clearCancelled();
-  expect(store.tasks).toHaveLength(1);
+  const clearing = store.clearCancelled();
+  expect(store.tasks).toHaveLength(0);
   expect(invoke).not.toHaveBeenCalledWith("db_delete_tasks", expect.anything());
-  stopping.resolve();
-  await cancelling;
-  await store.clearCancelled();
+  starting.resolve();
+  await Promise.all([adding, cancelling, clearing]);
   expect(invoke).toHaveBeenLastCalledWith("db_delete_tasks", { ids: ["clear"] });
 });
 
@@ -354,11 +354,10 @@ test("clearing completed history waits for the final state to be persisted", asy
   });
   complete("done");
   const clearing = store.clearCompleted();
-  expect(store.tasks).toHaveLength(1);
+  expect(store.tasks).toHaveLength(0);
   expect(invoke).not.toHaveBeenCalledWith("db_delete_tasks", expect.anything());
   writing.resolve();
   await clearing;
-  expect(store.tasks).toHaveLength(0);
   expect(invoke).toHaveBeenLastCalledWith("db_delete_tasks", { ids: ["done"] });
 });
 
@@ -434,87 +433,4 @@ test("edited retries cannot replace parameters of an active task", async () => {
   expect(store.tasks[0].params).toEqual(originalParams);
   expect(starts()).toHaveLength(0);
   expect(invoke).not.toHaveBeenCalledWith("db_delete_task", expect.anything());
-});
-
-
-test("a rejected cancellation leaves the task active and its slot occupied", async () => {
-  const store = await readyStore();
-  mockState.settings.maxConcurrent = 1;
-  vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "cancel_download") throw new Error("stop failed");
-  });
-  await store.addTask(createTask("active"));
-  await store.addTask(createTask("waiting"));
-  await expect(store.cancelTask("active")).rejects.toThrow("stop failed");
-  expect(store.tasks.find((task) => task.id === "active")?.status).toBe("downloading");
-  expect(store.activeCount).toBe(1);
-  expect(starts()).toHaveLength(1);
-  handlers.get("download-cancelled")!({ payload: { id: "active", attempt: store.tasks.find((task) => task.id === "active")?.createdAt } });
-  await vi.waitFor(() => expect(starts()).toHaveLength(2));
-});
-
-test.each([{ outputFile: "", fileSizeBytes: 1 }, { outputFile: "no-file.mp4", fileSizeBytes: 0 }])(
-  "no completion without a valid saved file payload (%j)", async (payload) => {
-    const store = await readyStore();
-    await store.addTask(createTask("active"));
-    handlers.get("download-complete")!({ payload: { id: "active", attempt: store.tasks.find((task) => task.id === "active")?.createdAt, ...payload } });
-    expect(store.tasks[0]).toMatchObject({ status: "error", error: "err_download_no_output" });
-    expect(store.tasks[0].outputFile).toBeUndefined();
-  },
-);
-
-test("a retry write failure does not change the previous durable row or its diagnostics", async () => {
-  const original = { ...createTask("failed", "error"), error: "old details", logs: ["kept log"] };
-  vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "db_get_tasks") return [structuredClone(original)];
-    if (command === "db_upsert_task") throw new Error("disk unavailable");
-  });
-  const store = await readyStore();
-  expect(await store.retryTask("failed")).toBe(false);
-  expect(store.tasks[0]).toEqual(original);
-  await store.loadTasks();
-  expect(store.tasks[0]).toEqual(original);
-  expect(invoke).not.toHaveBeenCalledWith("db_delete_task", expect.anything());
-  expect(starts()).toHaveLength(0);
-});
-
-test("restored rows wait for startup configuration and start oldest first", async () => {
-  mockState.settings.maxConcurrent = 1;
-  vi.mocked(invoke).mockImplementation(async (command) => command === "db_get_tasks"
-    ? [createTask("C"), createTask("B"), createTask("A")] : undefined);
-  const store = await readyStore(false);
-  expect(starts()).toHaveLength(0);
-  await store.enableQueue();
-  const order = () => starts().map(([, args]) => (args as { params: { id: string } }).params.id);
-  expect(order()).toEqual(["A"]);
-  complete("A");
-  await vi.waitFor(() => expect(order()).toEqual(["A", "B"]));
-  complete("B");
-  await vi.waitFor(() => expect(order()).toEqual(["A", "B", "C"]));
-});
-
-test("a temporarily unavailable destination never deletes completed history", async () => {
-  const done = { ...createTask("offline", "completed"), outputFile: "X:/Saved/video.mp4" };
-  vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "db_get_tasks") return [done];
-    if (command === "check_files_exist") return [false];
-  });
-  const store = await readyStore();
-  expect(store.unavailableOutputs.has(done.id)).toBe(true);
-  expect(store.tasks).toEqual([done]);
-  expect(invoke).not.toHaveBeenCalledWith("db_delete_tasks", expect.anything());
-});
-
-
-test("a late terminal event cannot complete a newer attempt with the same ID", async () => {
-  const store = await readyStore();
-  await store.addTask(createTask("same"));
-  const attempt = store.tasks[0].createdAt;
-  handlers.get("download-error")!({ payload: { id: "same", attempt, error: "first failed" } });
-  expect(await store.retryTask("same")).toBe(true);
-  expect(store.tasks[0].createdAt).toBeGreaterThan(attempt);
-  handlers.get("download-complete")!({ payload: { id: "same", attempt, outputFile: "old.mp4", fileSizeBytes: 1 } });
-  expect(store.tasks[0].status).toBe("downloading");
-  complete("same");
-  expect(store.tasks[0].status).toBe("completed");
 });

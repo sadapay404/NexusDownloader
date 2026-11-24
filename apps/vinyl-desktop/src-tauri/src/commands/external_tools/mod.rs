@@ -2,9 +2,7 @@
 
 mod deno;
 mod ffmpeg;
-mod install;
 mod plugins;
-mod release_asset;
 mod settings;
 mod support;
 mod updates;

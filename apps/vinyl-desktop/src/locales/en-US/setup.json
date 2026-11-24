@@ -10,8 +10,6 @@
     "ffmpegDesc": "The selected video and audio streams cannot be combined because FFmpeg or FFprobe is unavailable.",
     "ffmpegHint": "Go to Settings to use a system installation or install the app-managed FFmpeg bundle, then start the download again.",
     "goToSettings": "Go to Settings",
-    "later": "Later",
-    "bootstrapFailed": "Waiting downloads are paused because the tool settings could not be applied. Check Settings, then retry.",
-    "retryToolSettings": "Retry tool settings"
+    "later": "Later"
   }
 }

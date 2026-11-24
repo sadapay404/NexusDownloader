@@ -2,13 +2,10 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::{path::PathBuf, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::artifacts::verify_outputs;
-use super::model::{CancelReply, DownloadProcessInfo};
+use super::model::DownloadProcessInfo;
 use super::parser;
-use super::process_tree::ProcessTree;
 
 /// 将秒数格式化为 HH:MM:SS
 fn format_duration(secs: f64) -> String {
@@ -27,7 +24,6 @@ fn format_duration(secs: f64) -> String {
 fn process_output_line(
     app: &AppHandle,
     task_id: &str,
-    attempt: i64,
     processes: &Arc<Mutex<HashMap<String, DownloadProcessInfo>>>,
     line: &str,
 ) {
@@ -44,7 +40,7 @@ fn process_output_line(
         let _ = app.emit(
             "download-progress",
             serde_json::json!({
-                "id": task_id, "attempt": attempt,
+                "id": task_id,
                 "percent": info.percent,
                 "speed": info.speed,
                 "eta": info.eta,
@@ -72,7 +68,7 @@ fn process_output_line(
                 let _ = app.emit(
                     "download-progress",
                     serde_json::json!({
-                        "id": task_id, "attempt": attempt,
+                        "id": task_id,
                         "percent": percent,
                         "speed": ffmpeg_speed,
                         "eta": "",
@@ -86,11 +82,60 @@ fn process_output_line(
         return; // ffmpeg 帧进度不转发到日志
     }
 
+    // 跟踪输出文件路径（从 [download] Destination 等行解析，作为备选方案）
+    if let Some(dest) = parse_destination(line) {
+        if let Ok(mut map) = processes.lock() {
+            if let Some(info) = map.get_mut(task_id) {
+                info.output_files.push(dest);
+            }
+        }
+    }
+
     // 转发日志到前端（不含进度 JSON 行，保持日志清晰）
     let _ = app.emit(
         "download-log",
-        serde_json::json!({ "id": task_id, "attempt": attempt, "line": line }),
+        serde_json::json!({ "id": task_id, "line": line }),
     );
+}
+
+/// 从 yt-dlp 输出行中解析目标文件路径（备选方案，可能有编码问题）
+fn parse_destination(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    // [download] Destination: /path/to/file.ext
+    if let Some(rest) = trimmed.strip_prefix("[download] Destination: ") {
+        return Some(rest.trim().to_string());
+    }
+    // [download] /path/to/file.ext has already been downloaded
+    if trimmed.starts_with("[download] ") && trimmed.ends_with("has already been downloaded") {
+        let inner = trimmed
+            .strip_prefix("[download] ")?
+            .strip_suffix("has already been downloaded")?
+            .trim();
+        if !inner.is_empty() {
+            return Some(inner.to_string());
+        }
+    }
+    // [Merger] Merging formats into "file.ext"
+    if trimmed.contains("[Merger] Merging formats into") {
+        let start = trimmed.find('"')? + 1;
+        let end = trimmed.rfind('"')?;
+        if start < end {
+            return Some(trimmed[start..end].to_string());
+        }
+    }
+    None
+}
+
+/// 从临时文件中读取 yt-dlp --print-to-file 写出的最终文件路径
+/// 返回最后一行（播放列表可能有多行）
+fn read_filepath_from_file(filepath_file: &str) -> Option<String> {
+    let content = std::fs::read_to_string(filepath_file).ok()?;
+    let last_line = content.trim().lines().last()?.trim().to_string();
+    if last_line.is_empty() {
+        None
+    } else {
+        Some(last_line)
+    }
 }
 
 /// 启动异步任务读取子进程输出流
@@ -98,13 +143,12 @@ fn process_output_line(
 pub(super) fn spawn_output_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
     app: AppHandle,
     task_id: String,
-    attempt: i64,
     processes: Arc<Mutex<HashMap<String, DownloadProcessInfo>>>,
     reader: R,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         read_output_lines(reader, |line| {
-            process_output_line(&app, &task_id, attempt, &processes, line)
+            process_output_line(&app, &task_id, &processes, line)
         })
         .await;
     })
@@ -193,109 +237,96 @@ mod line_reader_tests {
     }
 }
 
-/// Control and completion share one owner. A stop request cannot race a
-/// terminal write, and a failed stop cannot make a live job look cancelled.
-#[allow(clippy::too_many_arguments)]
+/// 启动异步任务等待子进程完成并发送结果事件
 pub(super) fn spawn_completion_handler(
     app: AppHandle,
     task_id: String,
-    attempt: i64,
     processes: Arc<Mutex<HashMap<String, DownloadProcessInfo>>>,
     mut child: tokio::process::Child,
-    tree: Arc<ProcessTree>,
-    mut cancel_rx: tokio::sync::mpsc::Receiver<CancelReply>,
-    manifest: tempfile::TempPath,
-    destination: PathBuf,
-    token: String,
     output_readers: [tokio::task::JoinHandle<()>; 2],
 ) {
     tokio::spawn(async move {
-        let mut cancellation = None;
-        let status = loop {
-            tokio::select! {
-                biased;
-                status = child.wait() => break status,
-                Some(reply) = cancel_rx.recv() => match tree.terminate() {
-                    Ok(()) => { cancellation = Some(reply); break child.wait().await; }
-                    Err(error) => { let _ = reply.send(Err(format!("err_kill_process:{error}"))); }
-                },
-            }
-        };
-        cancel_rx.close();
-        tree.settle().await;
-        drain_output_readers(output_readers, Duration::from_secs(5)).await;
-        let retire = || {
-            if let Ok(mut map) = processes.lock() {
-                map.remove(&task_id);
-            }
-        };
-        let db = app.state::<crate::db::DatabaseState>();
-        use crate::db::tasks::{mark_task_cancelled, mark_task_completed, mark_task_error};
+        let status = child.wait().await;
+        // The child can exit before buffered stderr/stdout has been consumed.
+        // Drain both pipes before reading its final error or removing the task.
+        drain_output_readers(output_readers, std::time::Duration::from_secs(5)).await;
 
-        if let Some(reply) = cancellation {
-            let saved = mark_task_cancelled(&db, &task_id, attempt);
-            retire();
-            match saved {
-                Ok(()) => {
-                    let _ = app.emit(
-                        "download-cancelled",
-                        serde_json::json!({ "id": task_id, "attempt": attempt }),
-                    );
-                    let _ = reply.send(Ok(()));
-                }
-                Err(error) => {
-                    let detail = format!("err_download_history_write:{error}");
-                    emit_error(&app, &task_id, attempt, &detail);
-                    let _ = reply.send(Err(detail));
-                }
-            }
-            return;
-        }
-
-        let errors = processes
+        let was_cancelled = processes
             .lock()
             .ok()
-            .and_then(|map| map.get(&task_id).and_then(|info| info.errors.summary()));
-        let result = match (errors, status) {
-            (Some(error), _) => Err(error),
-            (None, Ok(status)) if status.success() => {
-                verify_outputs(&manifest, &destination, &token)
-            }
-            (None, Ok(status)) => Err(format!("err_exit_code:{}", status.code().unwrap_or(-1))),
-            (None, Err(error)) => Err(error.to_string()),
-        }
-        .and_then(|(path, bytes)| {
-            mark_task_completed(&db, &task_id, attempt, &path, bytes)
-                .map_err(|error| format!("err_download_history_write:{error}"))?;
-            Ok((path, bytes))
-        });
-        match result {
-            Ok((output_file, size)) => {
-                retire();
-                let _ = app.emit(
-                    "download-complete",
-                    serde_json::json!({
-                        "id": task_id, "attempt": attempt, "outputFile": output_file, "fileSizeBytes": size
-                    }),
+            .and_then(|map| map.get(&task_id).map(|info| info.cancelled))
+            .unwrap_or(false);
+
+        // 仅以 yt-dlp 退出码判定成功；不能用「日志里见过 Destination 行」做兜底，
+        // 因为 yt-dlp 在开始写字节前就会先打印目标路径，下载半路超时也会留下这一行。
+        let success = matches!(&status, Ok(s) if s.success());
+
+        // 取消优先于一切结果。用户取消后进程可能恰好以退出码 0 正常结束，若此处不先
+        // 判断 was_cancelled，就会把已取消的任务覆盖成 completed，并弹出「下载完成」通知。
+        // cancel_download 已把状态落为 cancelled，这里只需清理临时文件、不再写任何状态。
+        if was_cancelled {
+            let _ = resolve_output_file(&processes, &task_id);
+        } else if success {
+            let (output_file, _) = resolve_output_file(&processes, &task_id);
+            let file_size_bytes = if !output_file.is_empty() {
+                std::fs::metadata(&output_file)
+                    .ok()
+                    .map(|metadata| metadata.len())
+            } else {
+                None
+            };
+
+            // 真正直接由 Rust 后端写入 SQLite 完成状态与最终产物信息
+            if let Some(db_state) = app.try_state::<crate::db::DatabaseState>() {
+                let _ = crate::db::tasks::mark_task_completed(
+                    &db_state,
+                    &task_id,
+                    &output_file,
+                    file_size_bytes.map(|s| s as i64),
                 );
             }
-            Err(error) => {
-                let error = match mark_task_error(&db, &task_id, attempt, &error) {
-                    Ok(()) => error,
-                    Err(detail) => format!("err_download_history_write:{detail}\n{error}"),
-                };
-                retire();
-                emit_error(&app, &task_id, attempt, &error);
+
+            let _ = app.emit(
+                "download-complete",
+                serde_json::json!({
+                    "id": task_id,
+                    "outputFile": output_file,
+                    "fileSizeBytes": file_size_bytes,
+                }),
+            );
+        } else {
+            // 失败时仍清理 --print-to-file 临时文件，避免遗留
+            let _ = resolve_output_file(&processes, &task_id);
+            let error_msg = processes
+                .lock()
+                .ok()
+                .and_then(|map| map.get(&task_id).and_then(|info| info.errors.summary()))
+                .unwrap_or_else(|| {
+                    status
+                        .as_ref()
+                        .map(|s| format!("err_exit_code:{}", s.code().unwrap_or(-1)))
+                        .unwrap_or_else(|e| e.to_string())
+                });
+
+            // 真正直接由 Rust 后端写入 SQLite 错误状态与详情
+            if let Some(db_state) = app.try_state::<crate::db::DatabaseState>() {
+                let _ = crate::db::tasks::mark_task_error(&db_state, &task_id, &error_msg);
             }
+
+            let _ = app.emit(
+                "download-error",
+                serde_json::json!({
+                    "id": task_id,
+                    "error": error_msg,
+                }),
+            );
+        }
+
+        // 清理进程记录
+        if let Ok(mut map) = processes.lock() {
+            map.remove(&task_id);
         }
     });
-}
-
-fn emit_error(app: &AppHandle, id: &str, attempt: i64, error: &str) {
-    let _ = app.emit(
-        "download-error",
-        serde_json::json!({ "id": id, "attempt": attempt, "error": error }),
-    );
 }
 
 /// A descendant can inherit a pipe after yt-dlp exits. Bound the shared drain
@@ -329,7 +360,6 @@ mod drain_tests {
     use super::{drain_output_readers, read_output_lines};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-
     use tokio::io::AsyncWriteExt;
 
     #[test]
@@ -391,4 +421,47 @@ mod drain_tests {
             assert_eq!(result, ["ERROR: stderr tail", "stdout tail"]);
         });
     }
+}
+
+/// 解析最终输出文件路径
+/// 优先从 --print-to-file 临时文件读取（UTF-8 可靠），回退到 stdout 解析结果
+fn resolve_output_file(
+    processes: &Arc<Mutex<HashMap<String, DownloadProcessInfo>>>,
+    task_id: &str,
+) -> (String, bool) {
+    processes
+        .lock()
+        .ok()
+        .map(|map| {
+            map.get(task_id)
+                .map(|info| {
+                    let mut file = String::new();
+
+                    // 优先从临时文件读取（避免 Windows stdout GBK 编码乱码问题）
+                    if let Some(ref fp_file) = info.filepath_file {
+                        if let Some(path) = read_filepath_from_file(fp_file) {
+                            file = path;
+                        }
+                        // 清理临时文件
+                        let _ = std::fs::remove_file(fp_file);
+                    }
+
+                    // 回退：从 stdout 解析的路径
+                    if file.is_empty() {
+                        file = info.output_files.last().cloned().unwrap_or_default();
+                        // 相对路径补全为绝对路径
+                        if !file.is_empty() && !std::path::Path::new(&file).is_absolute() {
+                            file = std::path::PathBuf::from(&info.download_dir)
+                                .join(&file)
+                                .to_string_lossy()
+                                .to_string();
+                        }
+                    }
+
+                    let has = !info.output_files.is_empty() || !file.is_empty();
+                    (file, has)
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
 }

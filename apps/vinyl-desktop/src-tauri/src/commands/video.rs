@@ -164,8 +164,7 @@ pub async fn fetch_video_info(
     proxy: Option<String>,
     custom_args: Option<String>,
 ) -> Result<Value, String> {
-    utils::validate_media_url(&url)?;
-    let custom_args = utils::parse_media_options(custom_args.as_deref().unwrap_or_default())?;
+    let custom_args = utils::split_command_line_args(custom_args.as_deref().unwrap_or_default())?;
     let extra_args: Vec<&str> = custom_args.iter().map(String::as_str).collect();
     support::run_ytdlp_json(
         &app,

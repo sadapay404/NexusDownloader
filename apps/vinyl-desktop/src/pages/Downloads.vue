@@ -109,7 +109,7 @@ const handleClearCancelled = () => {
     positiveText: t("common.clear"),
     negativeText: t("common.cancel"),
     onPositiveClick: () => {
-      void downloadStore.clearCancelled().catch(() => window.$message.error(t("errors.err_download_history_write")));
+      downloadStore.clearCancelled();
     },
   });
 };
@@ -122,7 +122,7 @@ const handleClearFailed = () => {
     positiveText: t("common.clear"),
     negativeText: t("common.cancel"),
     onPositiveClick: () => {
-      void downloadStore.clearFailed().catch(() => window.$message.error(t("errors.err_download_history_write")));
+      downloadStore.clearFailed();
     },
   });
 };
@@ -171,7 +171,7 @@ const handleRetryAllFailed = () => {
               <!-- 下载中分区 -->
               <div v-if="activeTasks.length > 0" class="section">
                 <n-flex align="center" :size="8" class="section-title-bar">
-                  <n-icon aria-hidden="true" size="16"><icon-mdi-download /></n-icon>
+                  <n-icon size="16"><icon-mdi-download /></n-icon>
                   <n-text strong>{{ $t("downloads.downloading") }}</n-text>
                   <n-tag size="small" round :bordered="false" type="info">
                     {{ activeTasks.length }}
@@ -193,7 +193,7 @@ const handleRetryAllFailed = () => {
               <!-- 已取消分区 -->
               <div v-if="cancelledTasks.length > 0" class="section">
                 <n-flex align="center" :size="8" class="section-title-bar">
-                  <n-icon aria-hidden="true" size="16"><icon-mdi-cancel /></n-icon>
+                  <n-icon size="16"><icon-mdi-cancel /></n-icon>
                   <n-text strong>{{ $t("downloads.cancelledTab") }}</n-text>
                   <n-tag size="small" round :bordered="false" type="default">
                     {{ cancelledTasks.length }}
@@ -207,7 +207,7 @@ const handleRetryAllFailed = () => {
                     @click="handleClearCancelled"
                   >
                     <template #icon>
-                      <n-icon aria-hidden="true" size="14"><icon-mdi-delete-sweep-outline /></n-icon>
+                      <n-icon size="14"><icon-mdi-delete-sweep-outline /></n-icon>
                     </template>
                     {{ $t("downloads.clearCancelled") }}
                   </n-button>
@@ -220,7 +220,7 @@ const handleRetryAllFailed = () => {
               <!-- 下载失败分区 -->
               <div v-if="failedTasks.length > 0" class="section">
                 <n-flex align="center" :size="8" class="section-title-bar">
-                  <n-icon aria-hidden="true" size="16"><icon-mdi-alert-circle-outline /></n-icon>
+                  <n-icon size="16"><icon-mdi-alert-circle-outline /></n-icon>
                   <n-text strong>{{ $t("downloads.failedTab") }}</n-text>
                   <n-tag size="small" round :bordered="false" type="error">
                     {{ failedTasks.length }}
@@ -234,13 +234,13 @@ const handleRetryAllFailed = () => {
                       @click="handleRetryAllFailed"
                     >
                       <template #icon>
-                        <n-icon aria-hidden="true" size="14"><icon-mdi-refresh /></n-icon>
+                        <n-icon size="14"><icon-mdi-refresh /></n-icon>
                       </template>
                       {{ $t("downloads.retryAll") }}
                     </n-button>
                     <n-button size="tiny" strong secondary type="error" @click="handleClearFailed">
                       <template #icon>
-                        <n-icon aria-hidden="true" size="14"><icon-mdi-delete-sweep-outline /></n-icon>
+                        <n-icon size="14"><icon-mdi-delete-sweep-outline /></n-icon>
                       </template>
                       {{ $t("downloads.clearFailed") }}
                     </n-button>
@@ -268,7 +268,7 @@ const handleRetryAllFailed = () => {
             </div>
             <div v-else>
               <n-flex align="center" :size="8" class="section-title-bar">
-                <n-icon aria-hidden="true" size="16"><icon-mdi-download /></n-icon>
+                <n-icon size="16"><icon-mdi-download /></n-icon>
                 <n-text strong>{{ $t("downloads.downloading") }}</n-text>
                 <n-tag size="small" round :bordered="false" type="info">
                   {{ activeTasks.length }}
@@ -319,7 +319,7 @@ const handleRetryAllFailed = () => {
             </div>
             <div v-else>
               <n-flex align="center" :size="8" class="section-title-bar">
-                <n-icon aria-hidden="true" size="16"><icon-mdi-cancel /></n-icon>
+                <n-icon size="16"><icon-mdi-cancel /></n-icon>
                 <n-text strong>{{ $t("downloads.cancelledTab") }}</n-text>
                 <n-tag size="small" round :bordered="false" type="default">
                   {{ cancelledTasks.length }}
@@ -333,7 +333,7 @@ const handleRetryAllFailed = () => {
                   @click="handleClearCancelled"
                 >
                   <template #icon>
-                    <n-icon aria-hidden="true" size="14"><icon-mdi-delete-sweep-outline /></n-icon>
+                    <n-icon size="14"><icon-mdi-delete-sweep-outline /></n-icon>
                   </template>
                   {{ $t("downloads.clearCancelled") }}
                 </n-button>
@@ -359,7 +359,7 @@ const handleRetryAllFailed = () => {
             </div>
             <div v-else>
               <n-flex align="center" :size="8" class="section-title-bar">
-                <n-icon aria-hidden="true" size="16"><icon-mdi-alert-circle-outline /></n-icon>
+                <n-icon size="16"><icon-mdi-alert-circle-outline /></n-icon>
                 <n-text strong>{{ $t("downloads.failedTab") }}</n-text>
                 <n-tag size="small" round :bordered="false" type="error">
                   {{ failedTasks.length }}
@@ -373,13 +373,13 @@ const handleRetryAllFailed = () => {
                     @click="handleRetryAllFailed"
                   >
                     <template #icon>
-                      <n-icon aria-hidden="true" size="14"><icon-mdi-refresh /></n-icon>
+                      <n-icon size="14"><icon-mdi-refresh /></n-icon>
                     </template>
                     {{ $t("downloads.retryAll") }}
                   </n-button>
                   <n-button size="tiny" strong secondary type="error" @click="handleClearFailed">
                     <template #icon>
-                      <n-icon aria-hidden="true" size="14"><icon-mdi-delete-sweep-outline /></n-icon>
+                      <n-icon size="14"><icon-mdi-delete-sweep-outline /></n-icon>
                     </template>
                     {{ $t("downloads.clearFailed") }}
                   </n-button>

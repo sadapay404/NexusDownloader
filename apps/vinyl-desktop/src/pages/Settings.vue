@@ -52,16 +52,32 @@ const downloadModeOptions = computed(() => [
   { label: t("detail.audioOnly"), value: "audio" },
 ]);
 
+const applyYoutubeExtractorArgs = async () => {
+  await invoke("set_youtube_extractor_args", {
+    poToken: settingStore.youtubePoToken,
+    visitorData: settingStore.youtubeVisitorData,
+  });
+};
+
 onMounted(async () => {
   platform.value = await invoke<string>("get_platform");
   appVersion.value = await getVersion();
+  await applyYoutubeExtractorArgs();
 });
+
+// PO Token / visitor_data 变更时同步到后端；不刷新状态（无需重新探测 yt-dlp）。
+watch(
+  () => [settingStore.youtubePoToken, settingStore.youtubeVisitorData],
+  async () => {
+    await applyYoutubeExtractorArgs();
+  },
+);
 </script>
 
 <template>
   <div class="settings-page">
     <n-flex align="center" justify="space-between" style="margin-bottom: 20px">
-      <n-h1 style="margin: 0">{{ $t("settings.title") }}</n-h1>
+      <n-h2 style="margin: 0">{{ $t("settings.title") }}</n-h2>
     </n-flex>
 
     <ToolManager />
@@ -73,7 +89,6 @@ onMounted(async () => {
             <span class="info-label">{{ $t("settings.jsRuntime") }}</span>
             <n-select
               v-model:value="settingStore.jsRuntime"
-              :aria-label="$t('settings.jsRuntime')"
               :options="[
                 { label: 'Deno', value: 'deno' },
                 { label: 'Node.js', value: 'node' },
@@ -94,7 +109,6 @@ onMounted(async () => {
             <span class="info-label">{{ $t("settings.youtubePoToken") }}</span>
             <n-input
               v-model:value="settingStore.youtubePoToken"
-              :input-props="{ 'aria-label': $t('settings.youtubePoToken') }"
               :placeholder="$t('settings.youtubePoTokenPlaceholder')"
               size="small"
               clearable
@@ -105,7 +119,6 @@ onMounted(async () => {
             <span class="info-label">{{ $t("settings.youtubeVisitorData") }}</span>
             <n-input
               v-model:value="settingStore.youtubeVisitorData"
-              :input-props="{ 'aria-label': $t('settings.youtubeVisitorData') }"
               :placeholder="$t('settings.youtubeVisitorDataPlaceholder')"
               size="small"
               clearable
@@ -120,17 +133,17 @@ onMounted(async () => {
       <div class="info-list">
         <div class="info-row">
           <span class="info-label">{{ $t("settings.language") }}</span>
-          <select v-model="settingStore.locale" class="language-select" :aria-label="$t('settings.language')">
-            <option v-for="option in localeOptions" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
+          <n-select
+            v-model:value="settingStore.locale"
+            :options="localeOptions"
+            style="width: 120px"
+            size="small"
+          />
         </div>
         <div class="info-row">
           <span class="info-label">{{ $t("settings.themeMode") }}</span>
           <n-select
             v-model:value="settingStore.themeMode"
-            :aria-label="$t('settings.themeMode')"
             :options="themeModeOptions"
             style="width: 120px"
             size="small"
@@ -138,12 +151,12 @@ onMounted(async () => {
         </div>
         <div class="info-row">
           <span class="info-label">{{ $t("settings.showTrayIcon") }}</span>
-          <n-switch v-model:value="settingStore.showTrayIcon" :aria-label="$t('settings.showTrayIcon')" />
+          <n-switch v-model:value="settingStore.showTrayIcon" />
         </div>
         <div class="info-row">
           <span class="info-label">{{ $t("settings.closeToTray") }}</span>
           <n-switch
-            v-model:value="settingStore.closeToTray" :aria-label="$t('settings.closeToTray')"
+            v-model:value="settingStore.closeToTray"
             :disabled="!settingStore.showTrayIcon"
           />
         </div>
@@ -154,15 +167,15 @@ onMounted(async () => {
       <div class="info-list">
         <div class="info-row">
           <span class="info-label">{{ $t("settings.startMaximized") }}</span>
-          <n-switch v-model:value="settingStore.startMaximized" :aria-label="$t('settings.startMaximized')" />
+          <n-switch v-model:value="settingStore.startMaximized" />
         </div>
         <div class="info-row">
           <span class="info-label">{{ $t("settings.showHomeTips") }}</span>
-          <n-switch v-model:value="settingStore.showHomeTips" :aria-label="$t('settings.showHomeTips')" />
+          <n-switch v-model:value="settingStore.showHomeTips" />
         </div>
         <div class="info-row">
           <span class="info-label">{{ $t("settings.showTaskbarProgress") }}</span>
-          <n-switch v-model:value="settingStore.showTaskbarProgress" :aria-label="$t('settings.showTaskbarProgress')" />
+          <n-switch v-model:value="settingStore.showTaskbarProgress" />
         </div>
       </div>
     </n-card>
@@ -178,7 +191,7 @@ onMounted(async () => {
         <div class="info-list">
           <div class="info-row">
             <span class="info-label">{{ $t("settings.playlistSubfolders") }}</span>
-            <n-switch v-model:value="settingStore.playlistSubfolders" :aria-label="$t('settings.playlistSubfolders')" />
+            <n-switch v-model:value="settingStore.playlistSubfolders" />
           </div>
         </div>
         <div class="info-list">
@@ -186,7 +199,6 @@ onMounted(async () => {
             <span class="info-label">{{ $t("detail.downloadMethod") }}</span>
             <n-select
               v-model:value="settingStore.defaultDownloadMode"
-              :aria-label="$t('detail.downloadMethod')"
               :options="downloadModeOptions"
               size="small"
               style="width: 160px"
@@ -198,7 +210,6 @@ onMounted(async () => {
             <span class="info-label">{{ $t("settings.concurrentFragments") }}</span>
             <n-select
               v-model:value="settingStore.concurrentFragments"
-              :aria-label="$t('settings.concurrentFragments')"
               :options="concurrentFragmentsOptions"
               size="small"
               style="width: 120px"
@@ -210,7 +221,6 @@ onMounted(async () => {
             <span class="info-label">{{ $t("settings.maxConcurrentDownloads") }}</span>
             <n-select
               v-model:value="settingStore.maxConcurrentDownloads"
-              :aria-label="$t('settings.maxConcurrentDownloads')"
               :options="maxConcurrentOptions"
               size="small"
               style="width: 120px"
@@ -222,14 +232,18 @@ onMounted(async () => {
             <span class="info-label">{{ $t("settings.downloadNotification") }}</span>
             <n-select
               v-model:value="settingStore.notifyMode"
-              :aria-label="$t('settings.downloadNotification')"
               :options="notifyModeOptions"
               size="small"
               style="width: 120px"
             />
           </div>
         </div>
-        <n-text depth="3">{{ $t("settings.keepBoth") }}</n-text>
+        <div class="info-list">
+          <div class="info-row">
+            <span class="info-label">{{ $t("settings.noOverwrites") }}</span>
+            <n-switch v-model:value="settingStore.noOverwrites" />
+          </div>
+        </div>
         <div class="info-list">
           <div class="info-row">
             <n-tooltip placement="right" :style="{ maxWidth: '320px' }">
@@ -240,7 +254,6 @@ onMounted(async () => {
             </n-tooltip>
             <n-input
               v-model:value="settingStore.defaultFfmpegArgs"
-              :input-props="{ 'aria-label': $t('settings.defaultFfmpegArgs') }"
               :placeholder="$t('detail.ffmpegArgsPlaceholder')"
               size="small"
               clearable
@@ -254,7 +267,6 @@ onMounted(async () => {
     <n-card :title="$t('detail.customArgs')" size="small" class="section-card">
       <n-input
         v-model:value="settingStore.defaultCustomArgs"
-        :input-props="{ 'aria-label': $t('detail.customArgs') }"
         :placeholder="$t('detail.customArgsPlaceholder')"
         type="textarea"
         :autosize="{ minRows: 2, maxRows: 5 }"
@@ -288,24 +300,10 @@ onMounted(async () => {
               text
               tag="a"
               href="https://github.com/sadapay404/NexusDownloader"
-              rel="noopener noreferrer"
               target="_blank"
               size="tiny"
             >
               GitHub
-            </n-button>
-          </div>
-          <div class="info-row">
-            <span class="info-label">{{ $t("settings.upstreamRepository") }}</span>
-            <n-button
-              tag="a"
-              text
-              size="tiny"
-              target="_blank"
-              rel="noopener noreferrer"
-              href="https://github.com/imsyy/yt-dlp-gui"
-            >
-              imsyy/yt-dlp-gui
             </n-button>
           </div>
         </div>
@@ -351,21 +349,6 @@ onMounted(async () => {
     order: 2;
     flex-shrink: 0;
   }
-}
-
-.language-select {
-  width: 120px;
-  padding: 5px 8px;
-  border: 1px solid var(--n-border-color);
-  border-radius: 4px;
-  background-color: var(--n-color);
-  color: inherit;
-  font: inherit;
-}
-
-.language-select:focus-visible {
-  outline: 2px solid var(--vinyl-accent);
-  outline-offset: 2px;
 }
 
 .info-label {

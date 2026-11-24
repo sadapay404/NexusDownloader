@@ -257,7 +257,6 @@ onUnmounted(() => {
 <template>
   <n-layout-footer
     position="absolute"
-    role="contentinfo"
     bordered
     class="status-bar"
     :aria-label="$t('statusBar.title')"
@@ -265,14 +264,14 @@ onUnmounted(() => {
     <n-flex align="center" justify="space-between" :wrap="false" class="status-list">
       <n-flex align="center" :size="12" :wrap="false">
         <n-button
+          :focusable="false"
           text
           size="tiny"
           class="status-summary"
-          :aria-label="$t('statusBar.activeDownloads', { count: downloadStore.activeCount })"
           @click="router.push({ name: 'downloads' })"
         >
           <template #icon>
-            <n-icon aria-hidden="true"><icon-mdi-download /></n-icon>
+            <n-icon><icon-mdi-download /></n-icon>
           </template>
           {{ $t("statusBar.activeDownloads", { count: downloadStore.activeCount }) }}
           <n-divider vertical />
@@ -288,13 +287,14 @@ onUnmounted(() => {
         >
           <template #trigger>
             <n-button
+              :focusable="false"
               text
               size="tiny"
               class="status-summary"
               :aria-label="$t('statusBar.runningToolTasks', { count: totalRunningCount })"
             >
               <template #icon>
-                <n-icon aria-hidden="true"><icon-mdi-toolbox /></n-icon>
+                <n-icon><icon-mdi-toolbox /></n-icon>
               </template>
               {{ $t("statusBar.runningToolTasks", { count: totalRunningCount }) }}
             </n-button>
@@ -312,7 +312,7 @@ onUnmounted(() => {
               :wrap="false"
             >
               <n-text style="font-size: 13px">{{ toolTaskLabel(tool) }}</n-text>
-              <n-button secondary strong size="small" @click="goToTool(tool)">
+              <n-button secondary strong size="small" :focusable="false" @click="goToTool(tool)">
                 {{ $t("common.open") }}
               </n-button>
             </n-flex>
@@ -329,6 +329,7 @@ onUnmounted(() => {
                 secondary
                 strong
                 size="small"
+                :focusable="false"
                 @click="goToChannelArchive"
               >
                 {{ $t("common.open") }}
@@ -343,12 +344,12 @@ onUnmounted(() => {
             <n-button
               text
               size="tiny"
-
+              :focusable="false"
               class="tool-trigger"
               :aria-label="$t('cookie.settings')"
               @click="statusStore.showCookieModal = true"
             >
-              <n-icon aria-hidden="true" size="18"><icon-mdi-cookie-cog /></n-icon>
+              <n-icon size="18"><icon-mdi-cookie-cog /></n-icon>
             </n-button>
           </template>
           {{ $t("cookie.settings") }}
@@ -366,7 +367,7 @@ onUnmounted(() => {
             <n-button
               text
               size="tiny"
-
+              :focusable="false"
               class="tool-trigger"
               :aria-label="tool.label"
             >
@@ -376,7 +377,7 @@ onUnmounted(() => {
                 :show="showToolDot(tool.key)"
                 :offset="[-1, 2]"
               >
-                <n-icon aria-hidden="true" size="18">
+                <n-icon size="18">
                   <component :is="tool.icon" />
                 </n-icon>
               </n-badge>
@@ -394,11 +395,10 @@ onUnmounted(() => {
                     <n-button
                       text
                       size="small"
-
-                      :aria-label="$t('setup.goToSettings')"
+                      :focusable="false"
                       @click="router.push({ name: 'settings' })"
                     >
-                      <n-icon aria-hidden="true"><icon-mdi-cog /></n-icon>
+                      <n-icon><icon-mdi-cog /></n-icon>
                     </n-button>
                   </template>
                   {{ $t("setup.goToSettings") }}

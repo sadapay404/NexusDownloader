@@ -1,11 +1,9 @@
 //! 外部工具管理共用的状态探测、进度通知与原子替换逻辑。
 
-use super::release_asset::VerifiedAsset;
 #[cfg(target_os = "windows")]
 use crate::commands::CREATE_NO_WINDOW;
 use crate::utils;
 use futures_util::StreamExt;
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -50,6 +48,46 @@ impl ProgressThrottle {
     }
 }
 
+/// 为可执行文件生成同目录临时路径，确保最终替换不会跨文件系统。
+pub(super) fn executable_temp_path(target: &Path, suffix: &str) -> Result<PathBuf, String> {
+    let stem = target
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("err_invalid_executable_path")?;
+    let extension = target.extension().and_then(|s| s.to_str());
+    let name = match extension {
+        Some(ext) => format!("{}.{}.{}", stem, suffix, ext),
+        None => format!("{}.{}", stem, suffix),
+    };
+    Ok(target.with_file_name(name))
+}
+
+/// 用已验证的临时文件替换正式文件；Windows 上保留可恢复备份，避免先删后换。
+pub(super) fn replace_executable(temp_path: &Path, target_path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let backup_path = executable_temp_path(target_path, "backup")?;
+        let _ = std::fs::remove_file(&backup_path);
+        if target_path.exists() {
+            std::fs::rename(target_path, &backup_path)
+                .map_err(|e| format!("err_backup_executable:{}", e))?;
+        }
+        if let Err(e) = std::fs::rename(temp_path, target_path) {
+            if backup_path.exists() {
+                let _ = std::fs::rename(&backup_path, target_path);
+            }
+            return Err(format!("err_replace_executable:{}", e));
+        }
+        let _ = std::fs::remove_file(backup_path);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(temp_path, target_path).map_err(|e| format!("err_replace_executable:{}", e))
+    }
+}
+
 pub(super) fn emit_tool_progress(
     app: &AppHandle,
     tool: &str,
@@ -78,77 +116,78 @@ pub(super) async fn download_to_file_with_progress(
     app: &AppHandle,
     tool: &str,
     operation: &str,
-    asset: &VerifiedAsset,
+    url: &str,
     target: &Path,
     start_percent: f64,
     span: f64,
 ) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt;
-    let result = async {
-        let client = reqwest::Client::builder()
-            .https_only(true)
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(DOWNLOAD_TIMEOUT)
-            .build()
-            .map_err(|e| format!("err_create_http_client:{e}"))?;
-        let response = client
-            .get(&asset.url)
-            .send()
-            .await
-            .map_err(|e| format!("err_download_failed:{e}"))?
-            .error_for_status()
-            .map_err(|e| format!("err_download_http_status:{e}"))?;
-        if response
-            .content_length()
-            .is_some_and(|bytes| bytes != asset.size)
-        {
-            return Err("err_tool_integrity".into());
-        }
-        let mut downloaded = 0;
-        let mut digest = Sha256::new();
-        let mut file = tokio::fs::File::create_new(target)
-            .await
-            .map_err(|e| format!("err_create_file:{e}"))?;
-        let mut throttle = ProgressThrottle::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("err_download_error:{e}"))?;
-            downloaded += chunk.len() as u64;
-            if downloaded > asset.size {
-                return Err("err_tool_integrity".into());
-            }
-            digest.update(&chunk);
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| format!("err_write_error:{e}"))?;
-            let percent = start_percent + downloaded as f64 / asset.size as f64 * span;
-            if throttle.should_emit(percent) {
-                emit_tool_progress(app, tool, operation, "downloading", Some(percent));
-            }
-        }
-        asset.check_integrity(downloaded, &format!("{:x}", digest.finalize()))?;
-        file.sync_all()
-            .await
-            .map_err(|e| format!("err_flush_file:{e}"))?;
-        Ok(())
-    }
-    .await;
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(target).await;
-    }
-    result
-}
-
-pub(super) async fn verify_release_version(
-    path: &Path,
-    version_arg: &str,
-    tool: &str,
-    tag: &str,
-) -> Result<(), String> {
-    let version = probe_version(path, version_arg, tool)
+    let client = reqwest::Client::builder()
+        .timeout(DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(|e| format!("err_create_http_client:{}", e))?;
+    let response = client
+        .get(url)
+        .send()
         .await
-        .map_err(|detail| format!("err_tool_version:{detail}"))?;
-    super::release_asset::check_reported_version(tool, tag, &version)
+        .map_err(|e| format!("err_download_failed:{}", e))?
+        .error_for_status()
+        .map_err(|e| format!("err_download_http_status:{}", e))?;
+
+    let total_size = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+
+    // 先清掉可能残留的只读旧文件，避免 File::create 因权限失败
+    let _ = tokio::fs::remove_file(target).await;
+    let mut file = tokio::fs::File::create(target)
+        .await
+        .map_err(|e| format!("err_create_file:{}", e))?;
+
+    let mut throttle = ProgressThrottle::new();
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(e) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(target).await;
+                return Err(format!("err_download_error:{}", e));
+            }
+        };
+        if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await {
+            drop(file);
+            let _ = tokio::fs::remove_file(target).await;
+            return Err(format!("err_write_error:{}", e));
+        }
+
+        downloaded += chunk.len() as u64;
+        let fraction = if total_size > 0 {
+            downloaded as f64 / total_size as f64
+        } else {
+            0.0
+        };
+        let percent = start_percent + fraction * span;
+        if throttle.should_emit(percent) {
+            emit_tool_progress(app, tool, operation, "downloading", Some(percent));
+        }
+    }
+
+    if let Err(e) = tokio::io::AsyncWriteExt::shutdown(&mut file).await {
+        drop(file);
+        let _ = tokio::fs::remove_file(target).await;
+        return Err(format!("err_flush_file:{}", e));
+    }
+    drop(file);
+
+    // 服务端给了 Content-Length 才校验完整性；分块传输下无法判断
+    if total_size > 0 && downloaded != total_size {
+        let _ = tokio::fs::remove_file(target).await;
+        return Err(format!(
+            "err_download_incomplete:expected={},actual={}",
+            total_size, downloaded
+        ));
+    }
+    Ok(())
 }
 
 /// 运行 `--version` 验证刚下载的可执行文件确实可启动。

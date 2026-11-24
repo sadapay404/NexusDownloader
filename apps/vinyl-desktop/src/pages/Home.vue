@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { storeToRefs } from "pinia";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { isValidUrl } from "@/utils/validate";
 import { useVideoStore } from "@/stores/video";
@@ -22,7 +21,8 @@ const settingStore = useSettingStore();
 const statusStore = useStatusStore();
 const { createPreparingTask, markPreparationError, launchDownload } = useDownloadLauncher();
 
-const { draftUrl: url, batchDraft: batchInput, needsLinkRetry } = storeToRefs(videoStore);
+const url = ref("");
+const batchInput = ref("");
 const batchParsing = ref(false);
 const standardSubmitting = ref(false);
 const showQuickSettings = ref(false);
@@ -135,7 +135,6 @@ const handleKeydown = (keyboardEvent: KeyboardEvent): void => {
  */
 const handleInput = (): void => {
   historyIndex.value = -1;
-  needsLinkRetry.value = false;
 };
 
 /**
@@ -308,15 +307,7 @@ const handleParsedData = async (
     return true;
   }
 
-  const quickItem = createPendingItem(videoData, true);
-  const cappedVideo = quickItem.downloadMode !== "audio" && settingStore.quickMaxHeight > 0;
-  if (cappedVideo && (quickItem.isPlaylist || !quickItem.selectedVideoFormat)) {
-    const message = translate("home.quickQualityUnavailable", { tier: settingStore.quickMaxHeight });
-    if (preparingTaskId) await markPreparationError(preparingTaskId, message);
-    window.$message.warning(message);
-    return false;
-  }
-  const downloadResult = await launchDownload(quickItem, preparingTaskId);
+  const downloadResult = await launchDownload(createPendingItem(videoData, true), preparingTaskId);
   return downloadResult === "started" || downloadResult === "queued";
 };
 
@@ -347,7 +338,6 @@ async function handleSearch(): Promise<void> {
   }
   if (!ensureQuickDownloadConfigured()) return;
   standardSubmitting.value = true;
-  needsLinkRetry.value = false;
   const candidate = clipboardVideo(trimmedUrl);
   if (candidate) markClipboardVideo(candidate.id);
   const quick = settingStore.homeDownloadBehavior === "quick";
@@ -362,22 +352,16 @@ async function handleSearch(): Promise<void> {
     if (fetchedData) {
       historyStore.add(trimmedUrl, fetchedData.videoInfo.title);
       if (quick) {
-        if (await handleParsedData(fetchedData, preparingTaskId)) {
-          if (url.value.trim() === trimmedUrl) url.value = "";
-        } else {
-          needsLinkRetry.value = true;
-        }
+        await launchDownload(createPendingItem(fetchedData, true), preparingTaskId);
       } else {
         const pendingId = pendingStore.add(fetchedData);
-        if (url.value.trim() === trimmedUrl) url.value = "";
         if (route.name === "home") {
           armVinylSelection(pendingId);
           await router.push({ name: "pending" });
         }
       }
-    } else {
-      needsLinkRetry.value = true;
-      if (preparingTaskId) await markPreparationError(preparingTaskId);
+    } else if (preparingTaskId) {
+      await markPreparationError(preparingTaskId);
     }
   } finally {
     standardSubmitting.value = false;
@@ -520,7 +504,7 @@ const handleBatchSearch = async (): Promise<void> => {
                   @paste="handleNativePaste"
                 >
                   <template #prefix>
-                    <n-icon aria-hidden="true"><icon-mdi-link-variant /></n-icon>
+                    <n-icon><icon-mdi-link-variant /></n-icon>
                   </template>
                 </n-input>
                 <n-button
@@ -533,17 +517,15 @@ const handleBatchSearch = async (): Promise<void> => {
                   @click="handleSearch"
                 >
                   <template #icon>
-                    <n-icon aria-hidden="true">
+                    <n-icon>
                       <icon-mdi-download v-if="settingStore.homeDownloadBehavior === 'quick'" />
                       <icon-mdi-magnify v-else />
                     </n-icon>
                   </template>
                   {{
-                    needsLinkRetry
-                      ? $t("home.retryLink")
-                      : settingStore.homeDownloadBehavior === "quick"
-                        ? $t("common.download")
-                        : $t("home.parse")
+                    settingStore.homeDownloadBehavior === "quick"
+                      ? $t("common.download")
+                      : $t("home.parse")
                   }}
                 </n-button>
               </div>
@@ -587,7 +569,7 @@ const handleBatchSearch = async (): Promise<void> => {
                   @click="handleBatchSearch"
                 >
                   <template #icon>
-                    <n-icon aria-hidden="true">
+                    <n-icon>
                       <icon-mdi-download v-if="settingStore.homeDownloadBehavior === 'quick'" />
                       <icon-mdi-magnify v-else />
                     </n-icon>
@@ -605,7 +587,7 @@ const handleBatchSearch = async (): Promise<void> => {
         <n-flex :size="8" justify="center">
           <n-button size="small" strong secondary round :disabled="isBusy" @click="handlePaste">
             <template #icon>
-              <n-icon aria-hidden="true" size="14"><icon-mdi-content-paste /></n-icon>
+              <n-icon size="14"><icon-mdi-content-paste /></n-icon>
             </template>
             {{ $t("common.paste") }}
           </n-button>
@@ -618,7 +600,7 @@ const handleBatchSearch = async (): Promise<void> => {
             @click="showHistory = true"
           >
             <template #icon>
-              <n-icon aria-hidden="true" size="14"><icon-mdi-history /></n-icon>
+              <n-icon size="14"><icon-mdi-history /></n-icon>
             </template>
             {{ $t("home.parseHistory") }}
           </n-button>
@@ -651,7 +633,7 @@ const handleBatchSearch = async (): Promise<void> => {
     <footer class="runout-credit">
       Proudly Created by
       <strong>Sheikh Arsalan</strong>
-      in Collaboration with
+      in Colaboration with
       <strong>Mubashir</strong>
     </footer>
 
@@ -709,7 +691,7 @@ const handleBatchSearch = async (): Promise<void> => {
                 @click.stop="historyStore.remove(item.url)"
               >
                 <template #icon>
-                  <n-icon aria-hidden="true" size="14"><icon-mdi-close /></n-icon>
+                  <n-icon size="14"><icon-mdi-close /></n-icon>
                 </template>
               </n-button>
             </template>

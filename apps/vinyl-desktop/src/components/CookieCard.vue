@@ -123,7 +123,7 @@ const handleSelectFile = async () => {
         <n-flex justify="end" :size="8">
           <n-button size="small" @click="handlePasteCookie">
             <template #icon>
-              <n-icon aria-hidden="true">
+              <n-icon>
                 <icon-mdi-content-paste />
               </n-icon>
             </template>
@@ -135,7 +135,7 @@ const handleSelectFile = async () => {
             @click="handleSaveCookieText"
           >
             <template #icon>
-              <n-icon aria-hidden="true">
+              <n-icon>
                 <icon-mdi-content-save-outline />
               </n-icon>
             </template>
@@ -155,7 +155,7 @@ const handleSelectFile = async () => {
           />
           <n-button size="small" @click="handleSelectFile">
             <template #icon>
-              <n-icon aria-hidden="true">
+              <n-icon>
                 <icon-mdi-file-search-outline />
               </n-icon>
             </template>

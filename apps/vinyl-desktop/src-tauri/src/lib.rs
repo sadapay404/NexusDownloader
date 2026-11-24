@@ -54,7 +54,9 @@ pub fn run() {
                 )
                 .build(),
         )
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
@@ -157,7 +159,6 @@ pub fn run() {
             // 退出前回收仍在运行的工具子进程。Windows 上父进程退出不会连带杀掉子进程，
             // 放着不管会让 yt-dlp 变成孤儿进程继续跑（抓直播弹幕时尤其明显）。
             if let tauri::RunEvent::Exit = event {
-                app.state::<commands::DownloadState>().terminate_all();
                 for pid in app.state::<platform::process::ProcessRegistry>().drain() {
                     let _ = platform::process::kill_process(pid);
                 }

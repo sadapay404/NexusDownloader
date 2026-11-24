@@ -3,14 +3,18 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::process_tree::ProcessTree;
-
-pub(super) type CancelReply = tokio::sync::oneshot::Sender<Result<(), String>>;
-
 /// 下载进程信息（运行时状态）
-pub(super) struct DownloadProcessInfo {
-    pub(super) tree: Arc<ProcessTree>,
-    pub cancel_tx: tokio::sync::mpsc::Sender<CancelReply>,
+pub struct DownloadProcessInfo {
+    /// 进程 PID
+    pub pid: u32,
+    /// 是否已被用户取消
+    pub cancelled: bool,
+    /// 从 stdout 解析到的输出文件路径（作为备选）
+    pub output_files: Vec<String>,
+    /// 下载目录
+    pub download_dir: String,
+    /// 临时文件路径，用于存储 --print-to-file 写出的最终文件路径
+    pub filepath_file: Option<String>,
     /// 时间裁剪的片段时长（秒），用于计算 ffmpeg 处理进度
     pub clip_duration: Option<f64>,
     pub errors: DownloadErrors,
@@ -81,19 +85,7 @@ mod error_tests {
 
 /// 下载状态管理（全局共享）
 pub struct DownloadState {
-    pub(super) processes: Arc<Mutex<HashMap<String, DownloadProcessInfo>>>,
-}
-
-impl DownloadState {
-    /// At process exit there is no new work to schedule. The next cold boot
-    /// records these attempts as interrupted and leaves queued work alone.
-    pub(crate) fn terminate_all(&self) {
-        if let Ok(processes) = self.processes.lock() {
-            for info in processes.values() {
-                let _ = info.tree.terminate();
-            }
-        }
-    }
+    pub processes: Arc<Mutex<HashMap<String, DownloadProcessInfo>>>,
 }
 
 impl Default for DownloadState {
@@ -114,7 +106,6 @@ pub struct DownloadParams {
     pub download_mode: String,
     pub video_format: Option<String>,
     pub video_has_audio: bool,
-    pub prefer_video: bool,
     pub audio_format: Option<String>,
     pub cookie_file: Option<String>,
     /// 从浏览器读取 Cookie 的浏览器名称
@@ -125,6 +116,8 @@ pub struct DownloadParams {
     pub output_template: Option<String>,
     /// 并发分片数
     pub concurrent_fragments: Option<u32>,
+    /// 不覆盖已有文件
+    pub no_overwrites: bool,
     pub embed_subs: bool,
     pub embed_thumbnail: bool,
     /// 下载封面为单独文件（--write-thumbnail），与嵌入封面相互独立

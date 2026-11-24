@@ -1,5 +1,4 @@
-export const DEFAULT_OUTPUT_TEMPLATE = "%(title).160B [%(id)s].%(ext)s";
-const LEGACY_DEFAULT = "%(title).200s [%(id)s].%(ext)s";
+export const DEFAULT_OUTPUT_TEMPLATE = "%(title).200s [%(id)s].%(ext)s";
 
 /** 扩展名后缀：最终传给 yt-dlp 的模板必须恰好以它结尾。 */
 export const EXT_SUFFIX = ".%(ext)s";
@@ -12,7 +11,7 @@ export const EXT_SUFFIX = ".%(ext)s";
  */
 const ALLOWED_CONVERSIONS = new Set("diouxXeEfFgGcrsBjhlqDSU".split(""));
 
-export type TemplateErrorCode = "empty" | "lone-percent" | "unclosed" | "bad-conversion" | "outside-dir";
+export type TemplateErrorCode = "empty" | "lone-percent" | "unclosed" | "bad-conversion";
 
 export interface TemplateError {
   code: TemplateErrorCode;
@@ -25,7 +24,6 @@ export const TEMPLATE_ERROR_KEYS: Record<TemplateErrorCode, string> = {
   "lone-percent": "detail.tplErrPercent",
   unclosed: "detail.tplErrUnclosed",
   "bad-conversion": "detail.tplErrConversion",
-  "outside-dir": "errors.err_output_template_relative",
 };
 
 /**
@@ -37,9 +35,6 @@ export const TEMPLATE_ERROR_KEYS: Record<TemplateErrorCode, string> = {
 export const validateOutputTemplate = (template: string): TemplateError | null => {
   const text = template.trim();
   if (!text) return { code: "empty", char: "" };
-  const pathShape = text.replace(/%%|%\([^)]*\)/g, "x");
-  if (pathShape.startsWith("~") || /[:$]/u.test(pathShape) || pathShape.split(/[\\/]/u)
-    .some((part) => !part || /^[.\s]+$/u.test(part))) return { code: "outside-dir", char: "" };
   let i = 0;
   while (i < text.length) {
     if (text[i] !== "%") {
@@ -69,8 +64,7 @@ export const validateOutputTemplate = (template: string): TemplateError | null =
 
 /** 规范化模板：去首尾空格、空模板回退默认，并保证恰好以一个 .%(ext)s 结尾。 */
 export const normalizeOutputTemplate = (template: string): string => {
-  const raw = template.trim();
-  const text = !raw || raw === LEGACY_DEFAULT ? DEFAULT_OUTPUT_TEMPLATE : raw;
+  const text = template.trim() || DEFAULT_OUTPUT_TEMPLATE;
   const base = text.endsWith(EXT_SUFFIX) ? text.slice(0, -EXT_SUFFIX.length) : text;
   return `${base}${EXT_SUFFIX}`;
 };

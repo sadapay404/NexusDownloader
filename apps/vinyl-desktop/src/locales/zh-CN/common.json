@@ -123,26 +123,6 @@
     "err_read_plugin": "读取插件包失败",
     "err_save_plugin": "保存插件包失败",
     "err_read_plugin_dir": "读取插件目录失败",
-    "err_open_dir": "打开目录失败",
-    "err_download_dir_expansion": "下载器无法按原样使用此文件夹名称。请选择其他保存目录。",
-    "err_create_output_manifest": "无法创建下载结果记录。",
-    "err_tool_operation_busy": "工具正在安装或更新。",
-    "err_replace_executable": "无法安装已验证的工具。请关闭正在使用该工具的任务后重试。",
-    "err_tool_rollback": "无法回滚工具安装。旧版工具保留在指定的备份目录。",
-    "err_tool_release": "无法获取已验证的工具版本信息。请重试或选择可信的本地工具。",
-    "err_tool_integrity": "下载的工具与发布的校验和或大小不符，未安装。",
-    "err_tool_version": "下载的工具版本与预期不符，未安装。",
-    "err_download_no_output": "下载器未确认在所选目录保存了非空文件。",
-    "err_download_history_write": "无法保存下载历史，请检查应用存储后重试。",
-    "err_download_interrupted": "应用关闭时下载尚未完成。可重试。",
-    "err_cancel_not_confirmed": "无法确认下载器已停止。",
-    "err_task_not_queued": "此任务已不在队列中。",
-    "err_invalid_format_id": "此来源返回了不受支持的格式编号。",
-    "err_invalid_download_mode": "请选择下载模式并重新解析链接。",
-    "err_invalid_download_dir": "请选择可访问的现有下载目录。",
-    "err_invalid_media_url": "请输入有效的 HTTP 或 HTTPS 链接。",
-    "err_output_template_relative": "请使用文件名或所选下载目录内的相对路径。",
-    "err_unsupported_custom_option": "托管下载不支持此 yt-dlp 参数",
-    "err_invalid_custom_option_value": "自定义 yt-dlp 参数缺少有效值。"
+    "err_open_dir": "打开目录失败"
   }
 }

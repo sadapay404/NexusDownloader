@@ -27,8 +27,7 @@
     "home": "Home",
     "pending": "Pending",
     "downloads": "Downloads",
-    "toolbox": "Tools",
-    "navigation": "Main navigation"
+    "toolbox": "Tools"
   },
   "tray": {
     "show": "Show Window",
@@ -124,26 +123,6 @@
     "err_read_plugin": "Failed to read plugin package",
     "err_save_plugin": "Failed to save plugin package",
     "err_read_plugin_dir": "Failed to read plugin directory",
-    "err_open_dir": "Failed to open directory",
-    "err_download_no_output": "The downloader did not confirm a saved, non-empty file in the selected folder.",
-    "err_download_history_write": "Could not save download history. Check app storage and try again.",
-    "err_download_interrupted": "The app closed before this download finished. Retry to start it again.",
-    "err_cancel_not_confirmed": "The app could not confirm that the downloader stopped.",
-    "err_task_not_queued": "This task is no longer queued.",
-    "err_invalid_format_id": "This source returned an unsupported format ID.",
-    "err_invalid_download_mode": "Select a download mode and inspect the link again.",
-    "err_invalid_download_dir": "Choose an existing download folder that is accessible.",
-    "err_invalid_media_url": "Enter a valid HTTP or HTTPS link.",
-    "err_output_template_relative": "Use a filename or a subfolder inside the selected download folder.",
-    "err_unsupported_custom_option": "This yt-dlp option is not supported for managed downloads",
-    "err_invalid_custom_option_value": "A custom yt-dlp option is missing a valid value.",
-    "err_tool_release": "Could not get verified tool release information. Try again or choose a trusted local tool.",
-    "err_tool_integrity": "The downloaded tool did not match its release checksum or size. It was not installed.",
-    "err_tool_version": "The downloaded tool did not report the expected version. It was not installed.",
-    "err_download_dir_expansion": "This folder name cannot be passed to the downloader unchanged. Choose another save folder.",
-    "err_create_output_manifest": "The app could not create a private download result record.",
-    "err_tool_operation_busy": "A tool installation or update is already running.",
-    "err_replace_executable": "Could not install the verified tool. Close any jobs using it and try again.",
-    "err_tool_rollback": "Tool installation could not be rolled back. The previous binaries were kept in the specified backup folder."
+    "err_open_dir": "Failed to open directory"
   }
 }

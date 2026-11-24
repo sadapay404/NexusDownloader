@@ -51,7 +51,21 @@
         }
       }
     </style>
-    <script src="/theme-init.js"></script>
+    <script>
+      // 匹配明暗模式
+      (() => {
+        try {
+          const raw = localStorage.getItem("setting");
+          const mode = raw ? JSON.parse(raw).themeMode : "dark";
+          const isDark =
+            mode === "dark" ||
+            (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (isDark) {
+            document.getElementById("loading-screen").classList.add("dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

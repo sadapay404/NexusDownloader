@@ -99,7 +99,7 @@
     "about": "About",
     "aboutDesc": "A yt-dlp GUI built with Tauri 2 + Vue 3 + Naive UI",
     "license": "License",
-    "repository": "NexusDownloader repository",
+    "repository": "Repository",
     "platform": "Platform",
     "ytdlpDownloadComplete": "yt-dlp download complete",
     "alreadyLatest": "Already up to date",
@@ -120,9 +120,7 @@
     "playlistSubfolders": "Download each playlist into its own folder",
     "startMaximized": "Start with a maximized window",
     "jsRuntime": "JavaScript runtime",
-    "jsRuntimeHint": "Deno can be installed in the app. Other runtimes use your system PATH.",
-    "upstreamRepository": "Upstream project",
-    "keepBoth": "Existing files are never replaced by a new download. Each filename includes a format ID and a short attempt ID."
+    "jsRuntimeHint": "Deno can be installed in the app. Other runtimes use your system PATH."
   },
   "cookie": {
     "settings": "Cookie Settings",

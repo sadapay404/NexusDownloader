@@ -441,7 +441,7 @@ onUnmounted(() => unlistenProgress?.());
     <template #header-extra>
       <n-button size="small" strong secondary :loading="refreshing" @click="refreshAll">
         <template #icon>
-          <n-icon aria-hidden="true"><icon-mdi-refresh /></n-icon>
+          <n-icon><icon-mdi-refresh /></n-icon>
         </template>
         {{ $t("common.refresh") }}
       </n-button>
@@ -609,7 +609,7 @@ onUnmounted(() => unlistenProgress?.());
                       "
                     >
                       <template #icon>
-                        <n-icon aria-hidden="true"><icon-mdi-content-copy /></n-icon>
+                        <n-icon><icon-mdi-content-copy /></n-icon>
                       </template>
                     </n-button>
                   </template>
@@ -644,7 +644,7 @@ onUnmounted(() => unlistenProgress?.());
                       @click="copyToolValue($t('settings.path'), statuses[tool.key]?.path || '')"
                     >
                       <template #icon>
-                        <n-icon aria-hidden="true"><icon-mdi-content-copy /></n-icon>
+                        <n-icon><icon-mdi-content-copy /></n-icon>
                       </template>
                     </n-button>
                   </template>

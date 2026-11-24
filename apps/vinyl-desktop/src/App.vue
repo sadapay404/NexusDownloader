@@ -14,18 +14,12 @@ import { useTrayManager } from "@/composables/useTrayManager";
 import { useAppBootstrap } from "@/composables/useAppBootstrap";
 
 const router = useRouter();
-const openSettings = () => router.push({ name: "settings" });
 const route = useRoute();
 const settingStore = useSettingStore();
 const downloadStore = useDownloadStore();
 const pendingStore = usePendingStore();
 
-const { applyToolSettings, applyingToolSettings, toolSettingsFailed } = useAppBootstrap({
-  pauseQueue: downloadStore.pauseQueue,
-  resumeQueue: () => {
-    void downloadStore.enableQueue().catch((error) => console.error("Could not start the download queue:", error));
-  },
-});
+const { bootstrap } = useAppBootstrap();
 const { setupTray, handleQuitRequest } = useTrayManager();
 const { setupExternalImportListeners } = useExternalImports();
 
@@ -69,15 +63,15 @@ currentAppWindow.onCloseRequested(async (closeEvent) => {
 });
 
 onMounted(async () => {
-  void getVersion().then((version) => { appVersion.value = version; }).catch(() => {});
-  await applyToolSettings();
-  if (settingStore.startMaximized) await currentAppWindow.maximize().catch(() => {});
-  await currentAppWindow.show().catch((error) => console.error("Could not show the window:", error));
-  // A tool preference or optional integration failure must not silently disable
-  // the rest of the application, including the UI used to recover.
-  const integrations = await Promise.allSettled([setupExternalImportListeners(), setupTray()]);
-  for (const result of integrations) {
-    if (result.status === "rejected") console.warn("Could not initialize a desktop integration:", result.reason);
+  appVersion.value = await getVersion().catch(() => "");
+  try {
+    await bootstrap();
+    await setupExternalImportListeners();
+    await setupTray();
+  } finally {
+    // 引导失败也要显示窗口，否则应用只剩托盘图标、看不到界面
+    if (settingStore.startMaximized) await currentAppWindow.maximize().catch(() => {});
+    await currentAppWindow.show();
   }
 });
 </script>
@@ -88,13 +82,13 @@ onMounted(async () => {
     <SetupModal />
     <MigrationModal />
     <n-layout class="vinyl-app-shell" style="height: 100vh">
-      <n-layout-header role="banner" bordered class="app-header">
+      <n-layout-header bordered class="app-header">
         <div class="header-side">
           <RouterLink class="logo" :to="{ name: 'home' }" aria-label="NexusDownloader">
             <img src="/runout-wordmark.svg" alt="NexusDownloader" class="logo-img" />
           </RouterLink>
         </div>
-        <nav class="header-nav" :aria-label="$t('nav.navigation')">
+        <div class="header-nav">
           <n-badge
             v-for="item in navItems"
             :key="item.key"
@@ -115,7 +109,7 @@ onMounted(async () => {
               @click="router.push({ name: item.key })"
             >
               <template #icon>
-                <n-icon aria-hidden="true">
+                <n-icon>
                   <component :is="item.icon" />
                 </n-icon>
               </template>
@@ -124,20 +118,18 @@ onMounted(async () => {
               </span>
             </n-button>
           </n-badge>
-        </nav>
+        </div>
         <div class="header-side header-side-right">
           <n-button
+            :focusable="false"
             quaternary
             circle
             tag="a"
             href="https://github.com/sadapay404/NexusDownloader"
-            :aria-label="$t('settings.repository')"
-            :title="$t('settings.repository')"
-            rel="noopener noreferrer"
             target="_blank"
           >
             <template #icon>
-              <n-icon aria-hidden="true">
+              <n-icon>
                 <icon-mdi-github />
               </n-icon>
             </template>
@@ -148,11 +140,12 @@ onMounted(async () => {
             :type="currentRoute === 'settings' ? 'primary' : 'default'"
             :secondary="currentRoute === 'settings'"
             :quaternary="currentRoute !== 'settings'"
+            :focusable="false"
             circle
-            @click="openSettings"
+            @click="router.push({ name: 'settings' })"
           >
             <template #icon>
-              <n-icon aria-hidden="true">
+              <n-icon>
                 <icon-mdi-cog />
               </n-icon>
             </template>
@@ -165,21 +158,13 @@ onMounted(async () => {
         content-style="display: flex; flex-direction: column; height: 100%; overflow: hidden;"
         :native-scrollbar="false"
       >
-        <main class="app-route-view">
-          <n-alert v-if="toolSettingsFailed" class="startup-alert" type="warning" role="alert">
-            <n-flex align="center" :size="8">
-              <span>{{ $t("setup.bootstrapFailed") }}</span>
-              <n-button size="small" :loading="applyingToolSettings" @click="applyToolSettings">
-                {{ $t("setup.retryToolSettings") }}
-              </n-button>
-            </n-flex>
-          </n-alert>
+        <div class="app-route-view">
           <router-view v-slot="{ Component: RouteComponent }">
             <Transition name="fade-slide" mode="out-in">
               <component :is="RouteComponent" />
             </Transition>
           </router-view>
-        </main>
+        </div>
       </n-layout>
       <AppStatusBar :title="appVersion ? `NexusDownloader v${appVersion}` : undefined" />
     </n-layout>
@@ -187,11 +172,6 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="scss">
-.startup-alert {
-  flex-shrink: 0;
-  margin: 8px 12px 0;
-}
-
 .app-header {
   height: 56px;
   display: flex;

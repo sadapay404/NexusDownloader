@@ -7,16 +7,13 @@ use std::process::Stdio;
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncBufReadExt;
 
-use super::install::{install_executables, make_executable, stage_in, staged_path};
-use super::release_asset::{new_managed_install, resolve_release_assets};
 use super::support::{
-    build_tool_status, download_to_file_with_progress, emit_tool_progress, verify_release_version,
+    build_tool_status, download_to_file_with_progress, emit_tool_progress, executable_temp_path,
+    replace_executable, verify_executable,
 };
 use super::ToolStatus;
 
 /// 获取 yt-dlp 安装状态和版本
-static INSTALLING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 #[tauri::command]
 pub async fn get_ytdlp_status(app: AppHandle) -> Result<ToolStatus, String> {
     let ytdlp_path = match utils::get_ytdlp_path(&app) {
@@ -52,31 +49,37 @@ pub fn set_ytdlp_channel(channel: String) -> Result<(), String> {
 }
 
 async fn download_ytdlp_impl(app: AppHandle, operation: &str) -> Result<(), String> {
-    let _install = INSTALLING
-        .try_lock()
-        .map_err(|_| "err_tool_operation_busy")?;
     emit_tool_progress(&app, "yt-dlp", operation, "downloading", Some(0.0));
     let ytdlp_path = utils::get_managed_ytdlp_path(&app)?;
-    let stage = stage_in(ytdlp_path.parent().ok_or("err_invalid_executable_path")?)?;
-    let temp_path = staged_path(&stage, &ytdlp_path)?;
-    let (repository, asset_name) = utils::ytdlp_release_asset();
-    let (tag, assets) = resolve_release_assets(
-        repository,
-        &[asset_name],
-        new_managed_install(operation, &[&ytdlp_path]),
-    )
-    .await?;
+    let temp_path = executable_temp_path(&ytdlp_path, "download")?;
 
     download_to_file_with_progress(
-        &app, "yt-dlp", operation, &assets[0], &temp_path, 0.0, 100.0,
+        &app,
+        "yt-dlp",
+        operation,
+        &utils::get_ytdlp_download_url(),
+        &temp_path,
+        0.0,
+        100.0,
     )
     .await?;
 
-    make_executable(&temp_path)?;
-    verify_release_version(&temp_path, "--version", "yt-dlp", &tag).await?;
+    // Unix: 设置可执行权限
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("err_set_permissions:{}", e))?;
+    }
+
+    // PyInstaller 可执行文件只有真正启动后才能确认内嵌归档完整。
+    if let Err(detail) = verify_executable(&temp_path, "--version").await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("err_validate_ytdlp:{}", detail));
+    }
 
     emit_tool_progress(&app, "yt-dlp", operation, "installing", None);
-    install_executables(stage, &[&ytdlp_path])?;
+    replace_executable(&temp_path, &ytdlp_path)?;
     emit_tool_progress(&app, "yt-dlp", operation, "complete", Some(100.0));
 
     Ok(())

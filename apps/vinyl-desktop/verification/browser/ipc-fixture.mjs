@@ -7,7 +7,7 @@ export const title = "A Vinyl Study";
 
 export async function installIpcFixture(page, options = {}) {
   await page.addInitScript(
-    ({ settings, source, info, folder, fetchFailure, ffmpegReady, runtimeReady, ytdlpReady, initialTasks, unavailable }) => {
+    ({ settings, source, info, folder, fetchFailure, ffmpegReady, runtimeReady, ytdlpReady, initialTasks, unavailable, toolSettingsError }) => {
       const callbacks = new Map();
       const listeners = new Map();
       const calls = [];
@@ -32,6 +32,7 @@ export async function installIpcFixture(page, options = {}) {
         fetchFailure,
         cancelError: null,
         rejectWrites: false,
+        toolSettingsError,
         emit(event, payload) {
           if (event.startsWith("download-") && payload.attempt === undefined) {
             payload = { ...payload, attempt: readTasks().find((row) => row.id === payload.id)?.createdAt };
@@ -74,6 +75,12 @@ export async function installIpcFixture(page, options = {}) {
             if (window.vinylFixture.fetchFailure) throw window.vinylFixture.fetchFailure;
             return window.vinylFixture.info;
           }
+          if (cmd === "set_youtube_extractor_args") {
+            if (window.vinylFixture.toolSettingsError) throw window.vinylFixture.toolSettingsError;
+            if (typeof args.poToken !== "string" || typeof args.visitorData !== "string") {
+              throw "invalid args for set_youtube_extractor_args";
+            }
+          }
           if (cmd === "db_get_tasks") return readTasks().sort((a, b) => b.createdAt - a.createdAt);
           if (cmd === "db_upsert_task") {
             if (window.vinylFixture.rejectWrites) throw "fixture write error";
@@ -85,7 +92,7 @@ export async function installIpcFixture(page, options = {}) {
             throw window.vinylFixture.cancelError;
           }
           if (cmd === "get_platform") return "windows";
-          if (cmd === "plugin:app|version") return "0.2.0";
+          if (cmd === "plugin:app|version") return "0.2.1";
           if (cmd === "plugin:dialog|open") return folder;
           if (cmd === "get_ytdlp_status") {
             const ready = window.vinylFixture.ytdlpReady;
@@ -125,6 +132,7 @@ export async function installIpcFixture(page, options = {}) {
       ytdlpReady: options.ytdlpReady ?? true,
       initialTasks: options.initialTasks ?? [],
       unavailable: options.unavailable ?? [],
+      toolSettingsError: options.toolSettingsError ?? null,
     },
   );
 }

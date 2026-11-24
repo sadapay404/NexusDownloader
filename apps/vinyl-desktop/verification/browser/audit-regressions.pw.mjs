@@ -179,6 +179,36 @@ test("FIFO starts only after tool settings and failed cancellation keeps the slo
   await assertOrder(page, "A", "B", "C");
 });
 
+test("a tool-settings startup failure pauses downloads until a successful retry", async ({ page }) => {
+  await installIpcFixture(page, {
+    initialTasks: [row("A", "queued")],
+    toolSettingsError: "fixture temporary IPC failure",
+  });
+  await page.goto("/downloads");
+  await expect(taskCard(page, "Audit A")).toContainText("Queued");
+  const retry = button(page, "Retry tool settings");
+  await expect(retry).toBeVisible();
+  expect(await startCalls(page)).toEqual([]);
+  await retry.click();
+  await expect(retry).toBeEnabled();
+  expect(await startCalls(page)).toEqual([]);
+  await page.evaluate(() => { window.vinylFixture.toolSettingsError = null; });
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  await assertOrder(page, "A");
+  expect(await requests(page, "db_delete_task")).toEqual([]);
+});
+
+test("an old profile with empty extractor fields does not block the queue", async ({ page }) => {
+  await installIpcFixture(page, {
+    initialTasks: [row("A", "queued")],
+    settings: { youtubePoToken: null, youtubeVisitorData: null },
+  });
+  await page.goto("/downloads");
+  await assertOrder(page, "A");
+  expect(await requests(page, "set_youtube_extractor_args")).toContainEqual({ poToken: "", visitorData: "" });
+});
+
 test("failed retry write and unavailable drive both keep existing history after reload", async ({ page }) => {
   const outputFile = "Q:/offline/kept.mp4";
   await installIpcFixture(page, {

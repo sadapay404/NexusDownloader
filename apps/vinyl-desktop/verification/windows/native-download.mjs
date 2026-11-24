@@ -22,6 +22,7 @@ if (![0, 60].includes(soakMinutes)) throw new Error("Native soak duration must b
 if (runnerPort && (!/^\d+$/.test(runnerPort) || +runnerPort < 1024 || +runnerPort > 65535)) {
   throw new Error("Invalid runner debug port");
 }
+const { version } = JSON.parse(await readFile(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const bytes = await readFile(new URL("../fixtures/vinyl-test.mp4", import.meta.url));
 const sha = (data) => createHash("sha256").update(data).digest("hex");
 const fixtureHash = "d3c35bb793efaed7d75a0675ba8eb18ebb0d5b15b44419d01a48c109741049f4";
@@ -151,7 +152,7 @@ try {
   await expect(page.getByRole("link", { name: "NexusDownloader", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByText("Windows", { exact: true })).toBeVisible();
-  await expect(page.getByText("v0.2.0", { exact: true })).toBeVisible();
+  await expect(page.getByText(`v${version}`, { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "NexusDownloader", exact: true }).click();
   stage = "inspecting the synthetic MP4";
   await link.fill(`http://127.0.0.1:${testPort}/vinyl-test.mp4`);

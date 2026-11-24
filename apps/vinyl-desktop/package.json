@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/package.json",
   "name": "nexusdownloader-vinyl",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "NexusDownloader Vinyl Edition, based on imsyy/yt-dlp-gui.",
   "keywords": [
     "yt-dlp",

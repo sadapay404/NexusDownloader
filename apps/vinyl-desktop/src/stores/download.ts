@@ -142,7 +142,7 @@ export const useDownloadStore = defineStore("download", () => {
       await ready;
       do {
         scheduleRequested = false;
-        while (activeCount.value < settings.maxConcurrent) {
+        while (queueEnabled && activeCount.value < settings.maxConcurrent) {
           let next: DownloadTask | undefined;
           for (let i = tasks.value.length - 1; i >= 0; i--) {
             if (tasks.value[i].status === "queued") { next = tasks.value[i]; break; }
@@ -179,7 +179,12 @@ export const useDownloadStore = defineStore("download", () => {
     return scheduling;
   }
 
-  /** App bootstrap calls this after persisted tool sources and runtime have been applied. */
+  /** Stop launching waiting tasks while tool settings are incomplete. */
+  function pauseQueue() {
+    queueEnabled = false;
+  }
+
+  /** Only resume after persisted tool sources and runtime have been applied. */
   function enableQueue() {
     queueEnabled = true;
     return tryStartNext();
@@ -449,7 +454,7 @@ export const useDownloadStore = defineStore("download", () => {
 
   return {
     tasks, loaded, activeCount, unavailableOutputs, markOutputAvailable, cancellingIds,
-    loadTasks, enableQueue, addTask, updateTask, cancelTask, retryTask, reDownloadTask,
+    loadTasks, enableQueue, pauseQueue, addTask, updateTask, cancelTask, retryTask, reDownloadTask,
     retryAllInterrupted, removeTask,
     clearCompleted: () => clearTasks(["completed"], false),
     clearCancelled: () => clearTasks(["cancelled"], true),

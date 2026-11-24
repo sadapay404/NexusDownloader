@@ -11,6 +11,7 @@
     "ffmpegHint": "Go to Settings to use a system installation or install the app-managed FFmpeg bundle, then start the download again.",
     "goToSettings": "Go to Settings",
     "later": "Later",
-    "bootstrapFailed": "The app could not apply its tool settings. Check Settings and restart before resuming queued downloads."
+    "bootstrapFailed": "Waiting downloads are paused because the tool settings could not be applied. Check Settings, then retry.",
+    "retryToolSettings": "Retry tool settings"
   }
 }

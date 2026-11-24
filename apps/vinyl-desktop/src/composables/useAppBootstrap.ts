@@ -1,77 +1,65 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingStore } from "@/stores/setting";
 
-/**
- * 封装应用启动引导与底层服务同步逻辑的 Composable：
- * 1. CLI 工具源设置同步（managed / system / custom）
- * 2. yt-dlp 分支通道同步（stable / nightly / master）
- *
- * @returns 包含启动方法与各个同步操作的对象
- */
-export const useAppBootstrap = () => {
-  const settingStore = useSettingStore();
+interface ToolSettingsLifecycle {
+  pauseQueue: () => void;
+  resumeQueue: () => void;
+}
 
-  /**
-   * 将前端持久化的 CLI 工具源同步至 Rust 后端
-   *
-   * @returns Promise<unknown>
-   */
-  const applyToolSources = (): Promise<unknown> =>
-    invoke("set_tool_sources", {
-      ytdlp: settingStore.ytdlpSource,
-      deno: settingStore.denoSource,
-      ffmpeg: settingStore.ffmpegSource,
-      ytdlpLocalPath: settingStore.ytdlpLocalPath,
+// Older profiles may have persisted null for an optional text field.
+const optionalText = (value: unknown): string => typeof value === "string" ? value : "";
+
+export const useAppBootstrap = ({ pauseQueue, resumeQueue }: ToolSettingsLifecycle) => {
+  const settings = useSettingStore();
+  const toolSettingsFailed = ref(false);
+  const applyingToolSettings = ref(false);
+  let generation = 0;
+  let pending = Promise.resolve();
+
+  function applyToolSettings(): Promise<void> {
+    const version = ++generation;
+    const sources = {
+      ytdlp: settings.ytdlpSource,
+      deno: settings.denoSource,
+      ffmpeg: settings.ffmpegSource,
+      ytdlpLocalPath: optionalText(settings.ytdlpLocalPath),
+    };
+    const runtime = settings.jsRuntime;
+    const channel = settings.ytdlpChannel;
+    const extractor = {
+      poToken: optionalText(settings.youtubePoToken),
+      visitorData: optionalText(settings.youtubeVisitorData),
+    };
+    applyingToolSettings.value = true;
+    pauseQueue();
+
+    // Serialize updates: a slow older request must not overwrite newer settings
+    // or start a waiting download with a partially applied configuration.
+    pending = pending.then(async () => {
+      if (version !== generation) return;
+      try {
+        await invoke("set_tool_sources", sources);
+        await invoke("set_js_runtime", { runtime });
+        await invoke("set_ytdlp_channel", { channel });
+        await invoke("set_youtube_extractor_args", extractor);
+        if (version !== generation) return;
+        toolSettingsFailed.value = false;
+        resumeQueue();
+      } catch (error) {
+        if (version !== generation) return;
+        console.error("Could not apply desktop tool settings:", error);
+        toolSettingsFailed.value = true;
+      } finally {
+        if (version === generation) applyingToolSettings.value = false;
+      }
     });
+    return pending;
+  }
 
-  /**
-   * 将前端配置的 yt-dlp 分支通道同步至 Rust 后端
-   *
-   * @returns Promise<unknown>
-   */
-  const applyYtdlpChannel = (): Promise<unknown> =>
-    invoke("set_ytdlp_channel", { channel: settingStore.ytdlpChannel }).catch(() => {});
+  watch(() => [
+    settings.ytdlpSource, settings.ytdlpLocalPath, settings.denoSource, settings.ffmpegSource,
+    settings.jsRuntime, settings.ytdlpChannel, settings.youtubePoToken, settings.youtubeVisitorData,
+  ], () => void applyToolSettings());
 
-  const applyExtractorSettings = () => invoke("set_youtube_extractor_args", {
-    poToken: settingStore.youtubePoToken,
-    visitorData: settingStore.youtubeVisitorData,
-  });
-
-  /**
-   * 执行完整的应用启动引导任务
-   *
-   * @returns Promise<void>
-   */
-  const bootstrap = async (): Promise<void> => {
-    watch(
-      () => [
-        settingStore.ytdlpSource,
-        settingStore.ytdlpLocalPath,
-        settingStore.denoSource,
-        settingStore.ffmpegSource,
-      ],
-      () => applyToolSources(),
-    );
-
-    watch(
-      () => settingStore.ytdlpChannel,
-      () => applyYtdlpChannel(),
-    );
-
-    await applyToolSources();
-    watch(
-      () => settingStore.jsRuntime,
-      (runtime) => invoke("set_js_runtime", { runtime }),
-    );
-    await invoke("set_js_runtime", { runtime: settingStore.jsRuntime });
-    await applyYtdlpChannel();
-    watch(() => [settingStore.youtubePoToken, settingStore.youtubeVisitorData], applyExtractorSettings);
-    await applyExtractorSettings();
-  };
-
-  return {
-    bootstrap,
-    applyToolSources,
-    applyYtdlpChannel,
-  };
+  return { applyToolSettings, toolSettingsFailed, applyingToolSettings };
 };

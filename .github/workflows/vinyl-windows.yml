@@ -116,9 +116,54 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-first-run:
+    needs: windows-x64
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/vinyl-desktop
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.22.3'
+      - name: Retrieve Setup from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: NexusDownloader-Windows-x64
+          path: ${{ runner.temp }}/Vinyl-Setup
+      - name: Install locked verification tooling
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          corepack enable pnpm
+          pnpm install --frozen-lockfile
+      - name: Test clean launch, managed tools, direct save and FFmpeg merge
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\Vinyl-Setup" -File -Filter '*-Setup.exe')
+          if ($files.Count -ne 1) { throw 'Expected one previously verified Setup' }
+          $setup = $files[0].FullName
+          $hash = (Get-Content -Raw -LiteralPath "$setup.sha256").Trim().Split(' ')[0]
+          if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -ne $hash) { throw 'Setup checksum mismatch' }
+          try {
+            .\verification\windows\verify-managed-first-run.ps1 -Setup $setup -Check (Resolve-Path verification/windows/managed-first-run.mjs).Path
+          } catch {
+            $message = $_.ToString()
+            if ($message.Length -gt 3400) { $message = $message.Substring(0, 3400) }
+            $message = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Vinyl Windows first-run failure::$message"
+            throw
+          }
+
   windows-native-soak:
     if: github.event_name == 'workflow_dispatch' && inputs.native_soak
-    needs: windows-x64
+    needs: [windows-x64, windows-first-run]
     runs-on: windows-2025
     timeout-minutes: 100
     defaults:

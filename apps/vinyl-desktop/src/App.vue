@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useI18n } from "vue-i18n";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import IconMdiHome from "~icons/mdi/home";
@@ -14,7 +13,6 @@ import { useExternalImports } from "@/composables/useExternalImports";
 import { useTrayManager } from "@/composables/useTrayManager";
 import { useAppBootstrap } from "@/composables/useAppBootstrap";
 
-const { t } = useI18n();
 const router = useRouter();
 const openSettings = () => router.push({ name: "settings" });
 const route = useRoute();
@@ -22,7 +20,12 @@ const settingStore = useSettingStore();
 const downloadStore = useDownloadStore();
 const pendingStore = usePendingStore();
 
-const { bootstrap } = useAppBootstrap();
+const { applyToolSettings, applyingToolSettings, toolSettingsFailed } = useAppBootstrap({
+  pauseQueue: downloadStore.pauseQueue,
+  resumeQueue: () => {
+    void downloadStore.enableQueue().catch((error) => console.error("Could not start the download queue:", error));
+  },
+});
 const { setupTray, handleQuitRequest } = useTrayManager();
 const { setupExternalImportListeners } = useExternalImports();
 
@@ -66,19 +69,15 @@ currentAppWindow.onCloseRequested(async (closeEvent) => {
 });
 
 onMounted(async () => {
-  appVersion.value = await getVersion().catch(() => "");
-  try {
-    await bootstrap();
-    void downloadStore.enableQueue();
-    await setupExternalImportListeners();
-    await setupTray();
-  } catch (error) {
-    console.error("Could not initialize desktop tools:", error);
-    window.$message.error(t("setup.bootstrapFailed"));
-  } finally {
-    // 引导失败也要显示窗口，否则应用只剩托盘图标、看不到界面
-    if (settingStore.startMaximized) await currentAppWindow.maximize().catch(() => {});
-    await currentAppWindow.show();
+  void getVersion().then((version) => { appVersion.value = version; }).catch(() => {});
+  await applyToolSettings();
+  if (settingStore.startMaximized) await currentAppWindow.maximize().catch(() => {});
+  await currentAppWindow.show().catch((error) => console.error("Could not show the window:", error));
+  // A tool preference or optional integration failure must not silently disable
+  // the rest of the application, including the UI used to recover.
+  const integrations = await Promise.allSettled([setupExternalImportListeners(), setupTray()]);
+  for (const result of integrations) {
+    if (result.status === "rejected") console.warn("Could not initialize a desktop integration:", result.reason);
   }
 });
 </script>
@@ -167,6 +166,14 @@ onMounted(async () => {
         :native-scrollbar="false"
       >
         <main class="app-route-view">
+          <n-alert v-if="toolSettingsFailed" class="startup-alert" type="warning" role="alert">
+            <n-flex align="center" :size="8">
+              <span>{{ $t("setup.bootstrapFailed") }}</span>
+              <n-button size="small" :loading="applyingToolSettings" @click="applyToolSettings">
+                {{ $t("setup.retryToolSettings") }}
+              </n-button>
+            </n-flex>
+          </n-alert>
           <router-view v-slot="{ Component: RouteComponent }">
             <Transition name="fade-slide" mode="out-in">
               <component :is="RouteComponent" />
@@ -180,6 +187,11 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="scss">
+.startup-alert {
+  flex-shrink: 0;
+  margin: 8px 12px 0;
+}
+
 .app-header {
   height: 56px;
   display: flex;

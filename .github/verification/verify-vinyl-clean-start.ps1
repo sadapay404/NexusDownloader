@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Setup,
-  [Parameter(Mandatory = $true)][string]$Check
+  [Parameter(Mandatory = $true)][string]$Check,
+  [string]$PreviousSetup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,8 +23,8 @@ $work = Join-Path $env:RUNNER_TEMP ('vinyl-clean-' + [Guid]::NewGuid().ToString(
 New-Item -ItemType Directory $work | Out-Null
 $wrotePolicy = $false
 $madeKey = $false
-try {
-  $installed = Start-Process -FilePath $Setup -ArgumentList '/S' -PassThru -Wait
+function Install-AndFindApp([string]$Installer) {
+  $installed = Start-Process -FilePath $Installer -ArgumentList '/S' -PassThru -Wait
   if ($installed.ExitCode -ne 0) { throw "Setup exited with $($installed.ExitCode)" }
   $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
   $shortcut = @(Get-ChildItem $programs -Recurse -Filter 'NexusDownloader.lnk')
@@ -32,6 +33,14 @@ try {
   if ($target.TargetPath -ne (Join-Path $install $bin) -or $target.Arguments) {
     throw 'Unexpected arguments or app identity in the installed Start shortcut'
   }
+  return $target.TargetPath
+}
+function Invoke-CleanCheck([string]$App, [string]$Scenario) {
+  node $Check $App $work $port $Scenario 2>&1 | Tee-Object -Variable details
+  if ($LASTEXITCODE -ne 0) { throw (($details | Select-Object -First 26) -join "`n") }
+}
+
+try {
   if (-not (Test-Path -LiteralPath $policy)) {
     New-Item -Path $policy -Force | Out-Null
     $madeKey = $true
@@ -39,8 +48,16 @@ try {
   if ((Get-Item -LiteralPath $policy).GetValueNames() -contains $bin) { throw 'Refusing to overwrite an existing WebView2 policy' }
   New-ItemProperty -LiteralPath $policy -Name $bin -PropertyType String -Value "--remote-debugging-port=$port" | Out-Null
   $wrotePolicy = $true
-  node $Check $target.TargetPath $work $port 2>&1 | Tee-Object -Variable details
-  if ($LASTEXITCODE -ne 0) { throw (($details | Select-Object -First 24) -join "`n") }
+  if ($PreviousSetup) {
+    $prior = Install-AndFindApp $PreviousSetup
+    $previousHash = (Get-FileHash -LiteralPath $prior).Hash
+    Invoke-CleanCheck $prior seed
+    $current = Install-AndFindApp $Setup
+    if ((Get-FileHash -LiteralPath $current).Hash -eq $previousHash) { throw 'In-place Setup did not replace the prior Vinyl application' }
+    Invoke-CleanCheck $current upgrade
+  } else {
+    Invoke-CleanCheck (Install-AndFindApp $Setup) clean
+  }
 } finally {
   if ($wrotePolicy) { Remove-ItemProperty -LiteralPath $policy -Name $bin }
   if ($madeKey -and (Get-Item -LiteralPath $policy).ValueCount -eq 0) { Remove-Item -LiteralPath $policy }

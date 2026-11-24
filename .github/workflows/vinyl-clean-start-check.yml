@@ -15,6 +15,10 @@ jobs:
   clean-start:
     runs-on: windows-2025
     timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [clean, upgrade]
     defaults:
       run:
         working-directory: apps/vinyl-desktop
@@ -34,6 +38,14 @@ jobs:
           run-id: '45327723644'
           name: NexusDownloader-Windows-x64
           path: ${{ runner.temp }}/vinyl-delivered
+      - name: Retrieve the prior Vinyl Setup for the upgrade check
+        if: matrix.scenario == 'upgrade'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: '44573239540'
+          name: NexusDownloader-Windows-x64
+          path: ${{ runner.temp }}/vinyl-previous
       - name: Install verification dependencies
         shell: pwsh
         run: |
@@ -48,8 +60,14 @@ jobs:
             throw 'This is not the delivered installer'
           }
           Copy-Item ../../.github/verification/vinyl-clean-start.mjs verification/windows/vinyl-clean-start.mjs
+          $argsForCheck = @{ Setup = $setup; Check = (Resolve-Path verification/windows/vinyl-clean-start.mjs).Path }
+          if ('${{ matrix.scenario }}' -eq 'upgrade') {
+            $previous = Join-Path $env:RUNNER_TEMP 'vinyl-previous\NexusDownloader-0.2.0-Windows-x64-Setup.exe'
+            if ((Get-FileHash -LiteralPath $previous).Hash -ne '3db89ec0628f613474dea56930593e4b4dde93913e6e5961a9609accd1b24ca7') { throw 'Wrong prior Vinyl installer' }
+            $argsForCheck.PreviousSetup = $previous
+          }
           try {
-            & ../../.github/verification/verify-vinyl-clean-start.ps1 -Setup $setup -Check (Resolve-Path verification/windows/vinyl-clean-start.mjs).Path
+            & ../../.github/verification/verify-vinyl-clean-start.ps1 @argsForCheck
           } catch {
             $message = $_.ToString()
             if ($message.Length -gt 3400) { $message = $message.Substring(0, 3400) }

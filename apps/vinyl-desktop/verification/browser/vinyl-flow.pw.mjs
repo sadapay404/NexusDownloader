@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { verifyCreditsDialog } from "../credits.mjs";
 import {
   directory,
   installIpcFixture,
@@ -122,6 +123,23 @@ test("shorts copied on return select the real portrait 1080p rendition", async (
   expect(await lastDownload(page)).toEqual(
     expect.objectContaining({ videoFormat: "v-720", url: shortsUrl }),
   );
+});
+
+test("the underlined creator opens a dismissible Credits dialog", async ({ page }) => {
+  await installIpcFixture(page);
+  await page.goto("/");
+  await verifyCreditsDialog(page);
+  await expect(page).toHaveURL(/\/$/);
+
+  await quality(page, "Sheikh Arsalan").click();
+  await page.evaluate((next) => {
+    window.vinylFixture.clipboard = next;
+    window.dispatchEvent(new Event("focus"));
+  }, watchUrl);
+  expect(await requests(page, "fetch_video_info")).toEqual([]);
+  expect(await requests(page, "start_download")).toEqual([]);
+  await page.getByRole("dialog", { name: "Credits" }).getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("textbox", { name: "Video link" })).toBeVisible();
 });
 
 test("a missing 1080p format never offers automatic Continue and full controls remain", async ({

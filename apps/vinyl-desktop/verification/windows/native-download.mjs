@@ -7,6 +7,7 @@ import { createServer as createTcpServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium, expect } from "@playwright/test";
+import { verifyCreditsDialog } from "../credits.mjs";
 
 // Run only against a disposable installed Windows bundle. Serve a synthetic MP4 locally.
 if (process.platform !== "win32" || ![5, 6].includes(process.argv.length)) {
@@ -100,6 +101,9 @@ try {
   await expect(page.getByText("Windows", { exact: true })).toBeVisible();
   await expect(page.getByText("v0.2.0", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "NexusDownloader", exact: true }).click();
+  stage = "checking Credits dismissal in the installed WebView2";
+  await verifyCreditsDialog(page);
+  console.log("Installed Credits opened and closed by button, blurred backdrop, and Escape.");
   stage = "inspecting the synthetic MP4";
   await link.fill(`http://127.0.0.1:${testPort}/vinyl-test.mp4`);
   await page.getByRole("button", { name: "Inspect link", exact: true }).click();

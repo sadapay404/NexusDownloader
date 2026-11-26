@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import CreditsFooter from "@/components/home/CreditsFooter.vue";
 import { isValidUrl } from "@/utils/validate";
 import { useVideoStore } from "@/stores/video";
 import { createPendingItem, usePendingStore } from "@/stores/pending";
@@ -26,6 +27,7 @@ const batchInput = ref("");
 const batchParsing = ref(false);
 const standardSubmitting = ref(false);
 const showQuickSettings = ref(false);
+const showCredits = ref(false);
 const BATCH_LIMIT = 50;
 
 /**
@@ -63,6 +65,7 @@ const canReadClipboard = () =>
   !isBusy.value &&
   !showHistory.value &&
   !showQuickSettings.value &&
+  !showCredits.value &&
   !statusStore.showCookieModal &&
   !statusStore.showDenoSetupModal &&
   !statusStore.showFfmpegSetupModal &&
@@ -630,10 +633,7 @@ const handleBatchSearch = async (): Promise<void> => {
         </div>
       </n-flex>
     </section>
-    <footer class="runout-credit">
-      Proudly Created by <strong><u>Sheikh Arsalan</u></strong> for
-      <strong>Digital Sheikh Nexus Academy</strong>
-    </footer>
+    <CreditsFooter @visibility-change="showCredits = $event" />
 
     <n-drawer v-model:show="showHistory" :width="360" placement="right">
       <n-drawer-content :native-scrollbar="false">
@@ -791,17 +791,6 @@ const handleBatchSearch = async (): Promise<void> => {
     margin-top: 15px;
     color: var(--sleeve-muted);
     font-size: clamp(13px, 1.7vw, 16px);
-  }
-}
-
-.runout-credit {
-  padding: 15px 0;
-  text-align: center;
-  color: var(--vinyl-muted);
-  font-size: 12px;
-  strong {
-    font-weight: 650;
-    color: var(--vinyl-accent);
   }
 }
 

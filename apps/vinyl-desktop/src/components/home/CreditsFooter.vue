@@ -80,9 +80,6 @@ function onClose() {
         <dd>{{ value }}</dd>
       </div>
     </dl>
-    <p class="credits-notice">
-      NexusDownloader branding only. Upstream: yt-dlp-gui (MIT), © 2026 imsyy.
-    </p>
   </dialog>
 </template>
 
@@ -127,20 +124,20 @@ function onClose() {
   max-width: none;
   max-height: calc(100% - 32px);
   margin: auto;
-  padding: 21px clamp(14px, 5vw, 24px);
+  padding: 22px clamp(14px, 5vw, 24px);
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid #8c79574d;
+  border: 0;
   border-radius: 16px;
-  background: var(--vinyl-panel);
-  color: inherit;
+  background: #0d120e;
+  color: #f0f5f1;
   box-shadow: 0 24px 60px #0006;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 .credits-dialog::backdrop {
-  background: #0b0908a6;
+  background: #070e0aa6;
   backdrop-filter: blur(6px);
 }
 
@@ -160,42 +157,47 @@ function onClose() {
 .credits-close {
   min-height: 32px;
   padding: 4px 11px;
-  border: 1px solid var(--vinyl-keyline);
+  border: 1px solid #25322a;
   border-radius: 8px;
-  background: transparent;
+  background: #050505;
   color: inherit;
   font: inherit;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .credits-close:hover {
-  background: var(--vinyl-selection);
+  background: #19251c;
 }
 
 .credits-row {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: baseline;
   gap: 12px;
   padding-block: 10px;
-  border-bottom: 1px solid #8c795733;
-  overflow-wrap: anywhere;
+  border-bottom: 1px solid #1b201c;
 
   dt {
-    color: var(--vinyl-muted);
     font-weight: 600;
   }
 
   dd {
     text-align: end;
     font-weight: 600;
+    white-space: nowrap;
   }
 }
 
-.credits-notice {
-  margin-top: 9px;
-  color: var(--vinyl-muted);
-  font-size: 11px;
+@media (max-width: 420px) {
+  .credits-dialog {
+    font-size: 12px;
+  }
+
+  .credits-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }
 </style>

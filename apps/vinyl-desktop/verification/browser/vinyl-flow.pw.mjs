@@ -109,7 +109,9 @@ test("shorts copied on return select the real portrait 1080p rendition", async (
   await expect(page.getByRole("link", { name: "NexusDownloader" })).toBeVisible();
   const credit = page.locator(".runout-credit");
   await expect(credit).toBeVisible();
-  await expect(credit).toHaveText("Created by Sheikh Arsalan");
+  await expect(credit).toHaveText("Proudly Created by Sheikh Arsalan for Digital Sheikh Nexus Academy");
+  await expect(credit.locator("strong")).toHaveText(["Sheikh Arsalan", "Digital Sheikh Nexus Academy"]);
+  await expect(credit.locator("strong u")).toHaveText("Sheikh Arsalan");
   await page.evaluate((next) => {
     window.vinylFixture.clipboard = next;
     window.dispatchEvent(new Event("focus"));

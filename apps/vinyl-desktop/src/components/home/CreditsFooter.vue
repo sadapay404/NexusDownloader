@@ -8,8 +8,8 @@ const rows = [
   ["Who Am I", "Sheikh Arsalan"],
   ["Created For", "Digital Sheikh Nexus Academy"],
   ["Languages Used", "Rust, TypeScript, HTML, CSS"],
-  ["Licence", "MIT (yt-dlp-gui)"],
-  ["Copyright", "© 2026 imsyy (upstream)"],
+  ["Licence", "Proprietary — All Rights Reserved"],
+  ["Copyright", "© 2026 Sheikh Arsalan & Nexus Academy"],
 ];
 
 function showCredits() {
@@ -80,6 +80,9 @@ function onClose() {
         <dd>{{ value }}</dd>
       </div>
     </dl>
+    <p class="credits-notice">
+      NexusDownloader branding only. Upstream: yt-dlp-gui (MIT), © 2026 imsyy.
+    </p>
   </dialog>
 </template>
 
@@ -188,5 +191,11 @@ function onClose() {
     text-align: end;
     font-weight: 600;
   }
+}
+
+.credits-notice {
+  margin-top: 9px;
+  color: var(--vinyl-muted);
+  font-size: 11px;
 }
 </style>

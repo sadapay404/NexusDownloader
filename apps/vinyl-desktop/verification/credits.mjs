@@ -13,7 +13,15 @@ export async function verifyCreditsDialog(page) {
   await expect(credits.getByText("Sheikh Arsalan", { exact: true })).toBeVisible();
   const academy = credits.getByText("Digital Sheikh Nexus Academy", { exact: true });
   await expect(academy).toBeVisible();
-  await expect(credits.getByText("MIT (yt-dlp-gui)", { exact: true })).toBeVisible();
+  await expect(credits.getByText("Proprietary — All Rights Reserved", { exact: true })).toBeVisible();
+  await expect(
+    credits.getByText("© 2026 Sheikh Arsalan & Nexus Academy", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    credits.getByText("NexusDownloader branding only. Upstream: yt-dlp-gui (MIT), © 2026 imsyy.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   const blur = await credits.evaluate((dialog) => getComputedStyle(dialog, "::backdrop").backdropFilter);
   expect(blur).toContain("blur(");
 

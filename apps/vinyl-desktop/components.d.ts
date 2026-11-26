@@ -19,6 +19,7 @@ declare module 'vue' {
     CompletedTasksSection: typeof import('./src/components/downloads/CompletedTasksSection.vue')['default']
     CookieCard: typeof import('./src/components/CookieCard.vue')['default']
     CookieModal: typeof import('./src/components/CookieModal.vue')['default']
+    CreditsFooter: typeof import('./src/components/home/CreditsFooter.vue')['default']
     DownloadBar: typeof import('./src/components/home/DownloadBar.vue')['default']
     DownloadBehaviorControls: typeof import('./src/components/home/DownloadBehaviorControls.vue')['default']
     DownloadCard: typeof import('./src/components/downloads/DownloadCard.vue')['default']

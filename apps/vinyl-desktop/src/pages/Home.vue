@@ -630,12 +630,7 @@ const handleBatchSearch = async (): Promise<void> => {
         </div>
       </n-flex>
     </section>
-    <footer class="runout-credit">
-      Proudly Created by
-      <strong>Sheikh Arsalan</strong>
-      in Colaboration with
-      <strong>Mubashir</strong>
-    </footer>
+    <footer class="runout-credit">Created by <strong>Sheikh Arsalan</strong></footer>
 
     <n-drawer v-model:show="showHistory" :width="360" placement="right">
       <n-drawer-content :native-scrollbar="false">

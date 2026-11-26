@@ -107,9 +107,9 @@ test("shorts copied on return select the real portrait 1080p rendition", async (
   await installIpcFixture(page, { portrait: true });
   await page.goto("/");
   await expect(page.getByRole("link", { name: "NexusDownloader" })).toBeVisible();
-  await expect(
-    page.getByText("Proudly Created by Sheikh Arsalan in Colaboration with Mubashir"),
-  ).toBeVisible();
+  const credit = page.locator(".runout-credit");
+  await expect(credit).toBeVisible();
+  await expect(credit).toHaveText("Created by Sheikh Arsalan");
   await page.evaluate((next) => {
     window.vinylFixture.clipboard = next;
     window.dispatchEvent(new Event("focus"));
